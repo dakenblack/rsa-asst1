@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package>
+  <name>beacon_locator</name>
+  <version>0.0.0</version>
+  <description>Detects beacons using the Kinect sensor</description>
+  <maintainer email="z5061367@unsw.edu.au">Michael Hutchison</maintainer>
+  <license>TODO</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>rospy</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_depend>opencv2</build_depend>
+  <build_depend>cv_bridge</build_depend>
+  <run_depend>rospy</run_depend>
+  <run_depend>sensor_msgs</run_depend>
+  <run_depend>std_msgs</run_depend>
+  <run_depend>opencv2</run_depend>
+  <run_depend>cv_bridge</run_depend>
+  <export>
+    <!-- Other tools can request additional information be placed here -->
+  </export>
+</package>

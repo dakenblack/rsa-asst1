@@ -1,0 +1,13 @@
+<launch>
+    <node pkg="beacon_locator" type="locator.py" name="beacon_locator_node" output="screen">
+        <rosparam>
+            beacons: [
+                { id: 0, top: pink, bottom: green },
+                { id: 1, top: blue, bottom: pink },
+                { id: 2, top: pink, bottom: yellow },
+                { id: 3, top: yellow, bottom: pink },
+                { id: 4, top: pink, bottom: blue }
+            ]
+        </rosparam>
+    </node>
+</launch>

@@ -1,0 +1,2 @@
+This node can be run with:
+roslaunch beacon_locator beacon_locator.launch
