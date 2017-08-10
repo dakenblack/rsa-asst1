@@ -24,22 +24,22 @@ class locator:
 		self.colours = {
 			"yellow": {
 				"colour": (0,255,255),
-				"lowerBound": [20, 50, 50],
+				"lowerBound": [20, 30, 30],
 				"upperBound": [40, 255, 255]
 			},
 			"pink": {
 				"colour": (255,0,255),
-				"lowerBound": [120, 50, 50],
+				"lowerBound": [120, 30, 30],
 				"upperBound": [170, 255, 255]
 			},
 			"blue": {
 				"colour": (255,0,0),
-				"lowerBound": [95, 50, 50],
+				"lowerBound": [95, 30, 30],
 				"upperBound": [120, 255, 255]
 			},
 			"green": {
 				"colour": (0,255,0),
-				"lowerBound": [40, 50, 50],
+				"lowerBound": [40, 30, 30],
 				"upperBound": [95, 255, 255]
 			}
 		}
@@ -73,7 +73,7 @@ class locator:
 		# iterate through all pairs of detected rectangles
 		for rect1, rect2 in itertools.permutations(rects, 2):
 			# if the rect1 is positioned directly on top of rect2
-			if rect1[6] < rect2[6] and self.doesOverlap(rect1[1],rect1[3],rect2[1],rect2[3]) and rect1[4] - rect2[2] < 20:
+			if rect1[6] < rect2[6] and self.doesOverlap(rect1[1],rect1[3],rect2[1],rect2[3]) and abs(rect1[4] - rect2[2]) < 10:
 				# check if beacon is a valid colour combination
 				for b in self.beacons:
 					if b["top"] == rect1[0] and b["bottom"] == rect2[0]:
@@ -106,7 +106,7 @@ class locator:
 			x,y,w,h = cv2.boundingRect(contour) # get the bounding rectangle
 			sideRatio = w/h	# calculate the ratio between sides of the contours' bounding rectangle
 			rectArea = w*h # get the area of the contour
-			if y > 100 and y + h < 400 and rectArea > 1600 and rectArea < 14400:
+			if y > 100 and y + h < 400 and rectArea > 800 and rectArea < 14400:
 				rects.append([colour, x, y, x+w, y+h, x+w/2, y+h/2]) # add rect to list of candidate colour rectangles
 
 		return rects # return any colour rectangles
