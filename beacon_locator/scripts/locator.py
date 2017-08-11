@@ -50,32 +50,32 @@ class locator:
 		rects += self.getColourRects(cvImg, "green")
 
 		# create a black image for visualising detected rectangles
-		# note: only leave uncommented for testing purposes
-#		output = np.zeros((480,640,3), np.uint8)
-
-		# draw visualisation of possible beacon colour candidates
-		# note: only leave uncommented for testing purposes
-#		for rect in rects:
-#			cv2.rectangle(output, (rect[1], rect[2]), (rect[3], rect[4]), self.colours[rect[0]]["colour"], 3)
+		# caution: only leave uncommented for testing purposes
+#		output = np.zeros((480,640,3), np.uint8)			
 
 		print "Frame Processed"
 		# iterate through all pairs of detected rectangles
 		for rect1, rect2 in itertools.permutations(rects, 2):
 			# if the rect1 is positioned directly on top of rect2
-			if rect1[6] < rect2[6] and self.doesOverlap(rect1[1],rect1[3],rect2[1],rect2[3]) and abs(rect1[4] - rect2[2]) < 10:
+			if rect1["centerY"] < rect2["centerY"] and self.doesOverlap(rect1["minX"],rect1["maxX"],rect2["minX"],rect2["maxX"]) and abs(rect1["maxY"] - rect2["minY"]) < 10:
 				# check if beacon is a valid colour combination
 				for b in self.beacons:
-					if b["top"] == rect1[0] and b["bottom"] == rect2[0]:
-						print "Beacon %d: %s / %s [depth = %d (mm) at bearing = %d (deg)]" % (b["id"], rect1[0], rect2[0], self.getDepth(min(rect1[1], rect2[1]), max(rect1[3], rect2[3]), rect1[2], rect2[4]), self.getBearing(int((rect1[5]+rect2[5])/2))) # beacon has successfully identified
+					if b["top"] == rect1["colour"] and b["bottom"] == rect2["colour"]:
+						print "Beacon %d: %s / %s [depth = %d (mm) at bearing = %d (deg)]" % (b["id"], rect1["colour"], rect2["colour"], self.getDepth(min(rect1["minX"], rect2["minX"]), max(rect1["maxX"], rect2["maxX"]), rect1["minY"], rect2["maxY"]), self.getBearing(int((rect1["centerX"]+rect2["centerX"])/2))) # beacon has successfully identified
+
+						# draw visualisation of possible beacon colour candidates
+						# caution: only leave uncommented for testing purposes
+#						cv2.rectangle(output, (rect1["minX"], rect1["minY"]), (rect1["maxX"], rect1["maxY"]), self.colours[rect1["colour"]]["colour"], 3)
+#						cv2.rectangle(output, (rect2["minX"], rect2["minY"]), (rect2["maxX"], rect2["maxY"]), self.colours[rect2["colour"]]["colour"], 3)
 
 		# display the visualisation
-		# note: only leave uncommented for testing purposes
+		# caution: only leave uncommented for testing purposes
 #		cv2.imshow("images", output)
 #		cv2.waitKey(0)
 
 
 
-	# returns a list of rectangles the are possible candidates [colour, minX, minY, maxX, maxY, centerX, centerY]
+	# returns a list of rectangles the are possible candidates
 	def getColourRects(self, img, colour):
 
 		lower = np.array(self.colours[colour]["lowerBound"], dtype = "uint8") # create a np array for the lower colour bound
@@ -93,11 +93,10 @@ class locator:
 		rects = [] # list to store found contours matching basic conditions
 
 		for contour in contours:
-			x,y,w,h = cv2.boundingRect(contour) # get the bounding rectangle
-			sideRatio = w/h	# calculate the ratio between sides of the contours' bounding rectangle
-			rectArea = w*h # get the area of the contour
+			x, y, w, h = cv2.boundingRect(contour) # get the bounding rectangle
+			rectArea = w * h # get the area of the contour
 			if y > 100 and y + h < 400 and rectArea > 800 and rectArea < 14400:
-				rects.append([colour, x, y, x+w, y+h, x+w/2, y+h/2]) # add rect to list of candidate colour rectangles
+				rects.append({ "colour": colour, "minX": x, "minY": y, "maxX":x+w, "maxY":y+h, "centerX":x+w/2, "centerY":y+h/2 }) # add rect to list of candidate colour rectangles
 
 		return rects # return any colour rectangles
 
@@ -120,13 +119,13 @@ class locator:
 	def getDepth(self, minX, maxX, minY, maxY):
 		if self.depthImage is not None:
 			depths=[]
-			for y in range(minY+int((maxY-minY)/4), maxY-int((maxY-minY)/4), 1): # for the middle half of y values
-				for x in range(minX+int((maxX-minX)/4), maxX-int((maxX-minX)/4), 1): # for the middle half of x values
+			for y in range(minY+int((maxY-minY)/4), maxY-int((maxY-minY)/4)): # for the middle half of y values
+				for x in range(minX+int((maxX-minX)/4), maxX-int((maxX-minX)/4)): # for the middle half of x values
 					if self.depthImage[y, x] != 0: # if there is a depth value for the specified pixel
 						depths.append(self.depthImage[y, x]) # store the depth value
-			return int(sum(depths) / len(depths)) # get the average depth value
-		else:
-			return 0
+			if len(depths) > 0:
+				return int(sum(depths) / len(depths)) # get the average depth value
+		return 0
 	
 
 	# gets the bearing of the beacon relative to the robots reference frame (in degrees)
