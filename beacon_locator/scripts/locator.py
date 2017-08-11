@@ -15,37 +15,26 @@ import numpy as np
 class locator:
 
 	def __init__(self):
-		self.rgbSubscriber = rospy.Subscriber('/camera/rgb/image_color', Image, self.rgbCallback) # subscribe to images from the Kinect
-		self.bridge = CvBridge() # create a bridge to convert from ROS images to OpenCV images
 
-		self.beacons = rospy.get_param("/beacon_locator_node/beacons")
+		self.rgbSubscriber = rospy.Subscriber('/camera/rgb/image_color', Image, self.rgbCallback) # subscribe to rgb images from the Kinect
+		self.depthSubscriber = rospy.Subscriber('/camera/depth/image_raw', Image, self.depthCallback) # subscribe to depth images from the Kinect
+
+		self.bridge = CvBridge() # create a bridge to convert from ROS images to OpenCV images
+		self.beacons = rospy.get_param("/beacon_locator_node/beacons") # load the valid beacons from the ros param
+		self.depthImage = None # stores the depth image set by the Kinect
 		
 		# define the colours which occur as halves of the beacons
+		# colour is used when rendering during testing (in BGR format).
+		# lowerBound and upperBound are used when detecting beacons (in HSV format).
 		self.colours = {
-			"yellow": {
-				"colour": (0,255,255),
-				"lowerBound": [20, 30, 30],
-				"upperBound": [40, 255, 255]
-			},
-			"pink": {
-				"colour": (255,0,255),
-				"lowerBound": [120, 30, 30],
-				"upperBound": [170, 255, 255]
-			},
-			"blue": {
-				"colour": (255,0,0),
-				"lowerBound": [95, 30, 30],
-				"upperBound": [120, 255, 255]
-			},
-			"green": {
-				"colour": (0,255,0),
-				"lowerBound": [40, 30, 30],
-				"upperBound": [95, 255, 255]
-			}
+			"yellow": { "colour": (  0, 255, 255), "lowerBound": [ 20, 30, 30], "upperBound": [ 40, 255, 255] },
+			"pink":   { "colour": (255,   0, 255), "lowerBound": [120, 30, 30], "upperBound": [170, 255, 255] },
+			"blue":   { "colour": (255,   0,   0), "lowerBound": [ 95, 30, 30], "upperBound": [120, 255, 255] },
+			"green":  { "colour": (  0, 255,   0), "lowerBound": [ 40, 30, 30], "upperBound": [ 95, 255, 255] }
 		}
 
+
 	# callback function for when an rgb image is received from the Kinect sensor
-	# note: all colours are in BGR format
 	def rgbCallback(self, img):
 		try:
 			cvImg = self.bridge.imgmsg_to_cv2(img, "bgr8") # load image into OpenCV
@@ -77,12 +66,13 @@ class locator:
 				# check if beacon is a valid colour combination
 				for b in self.beacons:
 					if b["top"] == rect1[0] and b["bottom"] == rect2[0]:
-						print "Beacon %d: %s / %s" % (b["id"], rect1[0], rect2[0]) # beacon has successfully identified
+						print "Beacon %d: %s / %s [depth = %d (mm) at bearing = %d (deg)]" % (b["id"], rect1[0], rect2[0], self.getDepth(min(rect1[1], rect2[1]), max(rect1[3], rect2[3]), rect1[2], rect2[4]), self.getBearing(int((rect1[5]+rect2[5])/2))) # beacon has successfully identified
 
 		# display the visualisation
 		# note: only leave uncommented for testing purposes
 #		cv2.imshow("images", output)
 #		cv2.waitKey(0)
+
 
 
 	# returns a list of rectangles the are possible candidates [colour, minX, minY, maxX, maxY, centerX, centerY]
@@ -110,10 +100,39 @@ class locator:
 				rects.append([colour, x, y, x+w, y+h, x+w/2, y+h/2]) # add rect to list of candidate colour rectangles
 
 		return rects # return any colour rectangles
-	
+
+
 	# returns boolean indicating if two provided ranges overlap
-	def doesOverlap(self, r1_low, r1_high, r2_low, r2_high):
-		return ((r1_low >= r2_low and r1_low <= r2_high) or (r1_high >= r2_low and r1_high <= r2_high)) or ((r2_low >= r1_low and r2_low <= r1_high) or (r2_high >= r1_low and r2_high <= r1_high))
+	def doesOverlap(self, r1_min, r1_max, r2_min, r2_max):
+		return ((r1_min >= r2_min and r1_min <= r2_max) or (r1_max >= r2_min and r1_max <= r2_max)) or ((r2_min >= r1_min and r2_min <= r1_max) or (r2_max >= r1_min and r2_max <= r1_max))
+
+
+	# callback function for when a depth image is received from the Kinect sensor
+	def depthCallback(self, img):
+		img.encoding="mono16"
+		try:
+			self.depthImage = self.bridge.imgmsg_to_cv2(img, "passthrough") # load image into OpenCV
+		except CvBridgeError as e:
+			print(e)
+
+
+	# gets the average depth of the specified region (in mm)
+	def getDepth(self, minX, maxX, minY, maxY):
+		if self.depthImage is not None:
+			depths=[]
+			for y in range(minY+int((maxY-minY)/4), maxY-int((maxY-minY)/4), 1): # for the middle half of y values
+				for x in range(minX+int((maxX-minX)/4), maxX-int((maxX-minX)/4), 1): # for the middle half of x values
+					if self.depthImage[y, x] != 0: # if there is a depth value for the specified pixel
+						depths.append(self.depthImage[y, x]) # store the depth value
+			return int(sum(depths) / len(depths)) # get the average depth value
+		else:
+			return 0
+	
+
+	# gets the bearing of the beacon relative to the robots reference frame (in degrees)
+	def getBearing(self, x):
+		return int(((x-320)/640)*62)
+
 
 if __name__ == '__main__':
 	rd = locator()
