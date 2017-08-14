@@ -25,6 +25,10 @@
   <run_depend>turtlebot_bringup</run_depend>
   <run_depend>dwa_local_planner</run_depend>
 
+  <run_depend>frontier_exploration</run_depend>
+  <run_depend>geometry_msgs</run_depend>
+  <run_depend>actionlib</run_depend>
+
   <export>
 
   </export>
