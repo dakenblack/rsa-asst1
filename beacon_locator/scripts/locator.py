@@ -5,6 +5,8 @@ import rospy
 from std_msgs.msg import String
 from sensor_msgs.msg import Image
 from visualization_msgs.msg import Marker
+from geometry_msgs.msg import Point
+from std_msgs.msg import ColorRGBA
 
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
@@ -38,7 +40,7 @@ class locator:
 		
 		self.beacons = []
 		self.numBeaconsFound = 0
-		self.totalBeaconsToFind = 2
+		self.totalBeaconsToFind = 3
 		tmpBeacons = rospy.get_param("/beacon_locator_node/beacons") # load the valid beacons from the ros param
 		for b in tmpBeacons:
 			self.beacons.append({ "id": b["id"], "top": b["top"], "bottom": b["bottom"], "found": 0 })
@@ -80,8 +82,8 @@ class locator:
 						bearing = self.getBearing(int((rect1["centerX"]+rect2["centerX"])/2))
 						position = self.convertReferenceFrame(distance, bearing)
 
-						if b["found"] == 0 and distance > 0.5: # beacon has not been found				
-							print "Beacon %d: %s / %s [depth = %.2f(m) at bearing = %d (deg) (x: %d, y: %d)]" % (b["id"], rect1["colour"], rect2["colour"], distance, bearing, position["x"], position["y"]) # beacon has successfully identified
+						if b["found"] == 0 and distance > 0.5 and self.numBeaconsFound != self.totalBeaconsToFind: # beacon for the first time been found			
+							print "Beacon %d: %s / %s [depth = %.2f(m) at bearing = %d (deg) (x: %.2f, y: %.2f)]" % (b["id"], rect1["colour"], rect2["colour"], distance, bearing, position["x"], position["y"]) # beacon has successfully identified
 							self.publishBeacon(b["id"], rect1["colour"], rect2["colour"], position["x"], position["y"])
 							b["found"] = 1
 
@@ -163,42 +165,93 @@ class locator:
 
 	# publish a detected beacon
 	def publishBeacon(self, beaconId, top, bottom, x, y):
-		self.publishBeaconComponent(beaconId * 4 + 0, (x, y, 0.01), (0.1, 0.02), (0, 0, 0))
-		self.publishBeaconComponent(beaconId * 4 + 1, (x, y, 0.1), (0.02, 0.16), (0, 0, 0))
-		self.publishBeaconComponent(beaconId * 4 + 2, (x, y, 0.23), (0.1, 0.1), self.colours[bottom]["colour"])
-		self.publishBeaconComponent(beaconId * 4 + 3, (x, y, 0.33), (0.1, 0.1), self.colours[top]["colour"])
-		
+		marker = Marker()
+		marker.id = beaconId
+		marker.header.frame_id = "/map"
+		marker.type = 11
+		marker.action = 0
+		marker.scale.x = 1.0
+		marker.scale.y = 1.0
+		marker.scale.z = 1.0
+		marker.pose.orientation.w = 1.0
+		marker.pose.position.x = x
+		marker.pose.position.y = y
+		marker.pose.position.z = 0
+
+		# compute the required colours
+		baseCol = ColorRGBA(0.0, 0.0, 0.0, 1.0)
+		topCol = ColorRGBA(self.colours[top]["colour"][2]/255, self.colours[top]["colour"][1]/255, self.colours[top]["colour"][0]/255, 1.0)
+		bottomCol = ColorRGBA(self.colours[bottom]["colour"][2]/255, self.colours[bottom]["colour"][1]/255, self.colours[bottom]["colour"][0]/255, 1.0)
+
+		# compute the bottom and top center points
+		bottomCenter = Point(0, 0, 0)
+		topCenter = Point (0, 0, 0.4)
+
+		incAngle = math.pi/8
+		curAngle = 0
+		lastPoints = [None, None, None, None, None, None, None]
+
+		for i in range(0, 17):
+			# produce a list of points representing the radial cross section of the marker
+			points = [None, None, None, None, None, None, None]
+			xComp = math.sin(curAngle)
+			yComp = math.cos(curAngle)
+			points[0] = Point(xComp*0.05, yComp*0.05, 0)
+			points[1] = Point(xComp*0.05, yComp*0.05, 0.01)
+			points[2] = Point(xComp*0.01, yComp*0.01, 0.01)
+			points[3] = Point(xComp*0.01, yComp*0.01, 0.2)
+			points[4] = Point(xComp*0.05, yComp*0.05, 0.2)
+			points[5] = Point(xComp*0.05, yComp*0.05, 0.3)
+			points[6] = Point(xComp*0.05, yComp*0.05, 0.4)
+
+			if lastPoints[0] is not None: # if we can construct a fae
+				self.markerAddTri(marker, baseCol, bottomCenter, lastPoints[0], points[0]) # bottom face
+				self.markerAddRect(marker, baseCol, lastPoints[0], points[0], points[1], lastPoints[1])
+				self.markerAddRect(marker, baseCol, lastPoints[1], points[1], points[2], lastPoints[2])
+				self.markerAddRect(marker, baseCol, lastPoints[2], points[2], points[3], lastPoints[3])
+				self.markerAddRect(marker, bottomCol, lastPoints[3], points[3], points[4], lastPoints[4])
+				self.markerAddRect(marker, bottomCol, lastPoints[4], points[4], points[5], lastPoints[5])
+				self.markerAddRect(marker, topCol, lastPoints[5], points[5], points[6], lastPoints[6])
+				self.markerAddTri(marker, topCol, topCenter, lastPoints[6], points[6]) # top face
+
+			curAngle += incAngle # increment the angle for each iteration
+			lastPoints = points # store the calculated cross section for the next iteration
+
+
 		self.numBeaconsFound += 1
 		if self.numBeaconsFound == self.totalBeaconsToFind:
-			self.triggerBeaconsFound()
+			print "Beacon discovery is Complete"
+			self.foundStatus.publish("complete")
 
-
-	# publish a component of a beacon
-	def publishBeaconComponent(self, markerID, posXYZ, scaleRZ, colourBGR):
-		marker = Marker()
-		marker.id = markerID
-		marker.header.frame_id = "/map"
-		marker.type = 3
-		marker.action = 0
-		marker.scale.x = scaleRZ[0]
-		marker.scale.y = scaleRZ[0]
-		marker.scale.z = scaleRZ[1]
-		marker.color.a = 1.0
-		marker.color.r = colourBGR[2]
-		marker.color.g = colourBGR[1]
-		marker.color.b = colourBGR[0]
-		marker.pose.orientation.w = 1.0
-		marker.pose.position.x = posXYZ[0]
-		marker.pose.position.y = posXYZ[1]
-		marker.pose.position.z = posXYZ[2]
 		self.beaconPublisher.publish(marker)
 
 
-	# publish signal to indicate beacon discovery is complete
-	def triggerBeaconsFound(self):
-		print "Beacon discovery is Complete"
-		self.foundStatus.publish("complete")
+	# adds a triangle to a specified marker
+	def markerAddTri(self, marker, col, p0, p1, p2):
+		marker.points.append(p0)
+		marker.points.append(p1)
+		marker.points.append(p2)
+		marker.colors.append(col)
+		marker.colors.append(col)
+		marker.colors.append(col)
+
+
+	# adds a rectangle to a specified marker
+	def markerAddRect(self, marker, col, p0, p1, p2, p3):
+		marker.points.append(p0)
+		marker.points.append(p1)
+		marker.points.append(p2)
+		marker.points.append(p0)
+		marker.points.append(p2)
+		marker.points.append(p3)
+		marker.colors.append(col)
+		marker.colors.append(col)
+		marker.colors.append(col)
+		marker.colors.append(col)
+		marker.colors.append(col)
+		marker.colors.append(col)
 		
+
 
 if __name__ == '__main__':
 	rd = locator()
