@@ -21,6 +21,7 @@ class locator:
 		self.rgbSubscriber = rospy.Subscriber('/camera/rgb/image_color', Image, self.rgbCallback) # subscribe to rgb images from the Kinect
 		self.depthSubscriber = rospy.Subscriber('/camera/depth/image_raw', Image, self.depthCallback) # subscribe to depth images from the Kinect
 		self.beaconPublisher = rospy.Publisher("/comp3431/beacons", Marker, queue_size=10) # publish beacons for RVIZ on the required topic
+		self.foundStatus = rospy.Publisher("/beacon_locator_node/status", String, queue_size=10)
 
 		self.bridge = CvBridge() # create a bridge to convert from ROS images to OpenCV images
 		self.depthImage = None # stores the depth image set by the Kinect
@@ -36,6 +37,8 @@ class locator:
 		}
 		
 		self.beacons = []
+		self.numBeaconsFound = 0
+		self.totalBeaconsToFind = 2
 		tmpBeacons = rospy.get_param("/beacon_locator_node/beacons") # load the valid beacons from the ros param
 		for b in tmpBeacons:
 			self.beacons.append({ "id": b["id"], "top": b["top"], "bottom": b["bottom"], "found": 0 })
@@ -77,10 +80,10 @@ class locator:
 						bearing = self.getBearing(int((rect1["centerX"]+rect2["centerX"])/2))
 						position = self.convertReferenceFrame(distance, bearing)
 
-						if b["found"] == 0: # beacon has not been found				
-							print "Beacon %d: %s / %s [depth = %d (mm) at bearing = %d (deg) (x: %d, y: %d)]" % (b["id"], rect1["colour"], rect2["colour"], distance, bearing, position["x"], position["y"]) # beacon has successfully identified
+						if b["found"] == 0 and distance > 0.5: # beacon has not been found				
+							print "Beacon %d: %s / %s [depth = %.2f(m) at bearing = %d (deg) (x: %d, y: %d)]" % (b["id"], rect1["colour"], rect2["colour"], distance, bearing, position["x"], position["y"]) # beacon has successfully identified
 							self.publishBeacon(b["id"], rect1["colour"], rect2["colour"], position["x"], position["y"])
-							b["found"] = 1	
+							b["found"] = 1
 
 						# draw visualisation of possible beacon colour candidates
 						# caution: only leave uncommented for testing purposes
@@ -164,6 +167,10 @@ class locator:
 		self.publishBeaconComponent(beaconId * 4 + 1, (x, y, 0.1), (0.02, 0.16), (0, 0, 0))
 		self.publishBeaconComponent(beaconId * 4 + 2, (x, y, 0.23), (0.1, 0.1), self.colours[bottom]["colour"])
 		self.publishBeaconComponent(beaconId * 4 + 3, (x, y, 0.33), (0.1, 0.1), self.colours[top]["colour"])
+		
+		self.numBeaconsFound += 1
+		if self.numBeaconsFound == self.totalBeaconsToFind:
+			self.triggerBeaconsFound()
 
 
 	# publish a component of a beacon
@@ -187,6 +194,11 @@ class locator:
 		self.beaconPublisher.publish(marker)
 
 
+	# publish signal to indicate beacon discovery is complete
+	def triggerBeaconsFound(self):
+		print "Beacon discovery is Complete"
+		self.foundStatus.publish("complete")
+		
 
 if __name__ == '__main__':
 	rd = locator()
