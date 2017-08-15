@@ -4,12 +4,14 @@ from __future__ import division
 import rospy
 from std_msgs.msg import String
 from sensor_msgs.msg import Image
+from visualization_msgs.msg import Marker
 
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
 
 import itertools
 import numpy as np
+import math
 
 
 class locator:
@@ -18,9 +20,9 @@ class locator:
 
 		self.rgbSubscriber = rospy.Subscriber('/camera/rgb/image_color', Image, self.rgbCallback) # subscribe to rgb images from the Kinect
 		self.depthSubscriber = rospy.Subscriber('/camera/depth/image_raw', Image, self.depthCallback) # subscribe to depth images from the Kinect
+		self.beaconPublisher = rospy.Publisher("/comp3431/beacons", Marker, queue_size=10) # publish beacons for RVIZ on the required topic
 
 		self.bridge = CvBridge() # create a bridge to convert from ROS images to OpenCV images
-		self.beacons = rospy.get_param("/beacon_locator_node/beacons") # load the valid beacons from the ros param
 		self.depthImage = None # stores the depth image set by the Kinect
 		
 		# define the colours which occur as halves of the beacons
@@ -32,6 +34,16 @@ class locator:
 			"blue":   { "colour": (255,   0,   0), "lowerBound": [ 95, 30, 30], "upperBound": [120, 255, 255] },
 			"green":  { "colour": (  0, 255,   0), "lowerBound": [ 40, 30, 30], "upperBound": [ 95, 255, 255] }
 		}
+		
+		self.beacons = []
+		tmpBeacons = rospy.get_param("/beacon_locator_node/beacons") # load the valid beacons from the ros param
+		for b in tmpBeacons:
+			self.beacons.append({ "id": b["id"], "top": b["top"], "bottom": b["bottom"], "found": 0 })
+		
+
+		self.robotHeading = 0 # heading of the robot in radians
+		self.robotX = 0 # x coord of the robot in global frame
+		self.robotY = 0 # y coord of the robot in global frame
 
 
 	# callback function for when an rgb image is received from the Kinect sensor
@@ -53,7 +65,7 @@ class locator:
 		# caution: only leave uncommented for testing purposes
 #		output = np.zeros((480,640,3), np.uint8)			
 
-		print "Frame Processed"
+		#print "Frame Processed"
 		# iterate through all pairs of detected rectangles
 		for rect1, rect2 in itertools.permutations(rects, 2):
 			# if the rect1 is positioned directly on top of rect2
@@ -61,13 +73,20 @@ class locator:
 				# check if beacon is a valid colour combination
 				for b in self.beacons:
 					if b["top"] == rect1["colour"] and b["bottom"] == rect2["colour"]:
-						print "Beacon %d: %s / %s [depth = %d (mm) at bearing = %d (deg)]" % (b["id"], rect1["colour"], rect2["colour"], self.getDepth(min(rect1["minX"], rect2["minX"]), max(rect1["maxX"], rect2["maxX"]), rect1["minY"], rect2["maxY"]), self.getBearing(int((rect1["centerX"]+rect2["centerX"])/2))) # beacon has successfully identified
+						distance = self.getDepth(min(rect1["minX"], rect2["minX"]), max(rect1["maxX"], rect2["maxX"]), rect1["minY"], rect2["maxY"]) / 1000
+						bearing = self.getBearing(int((rect1["centerX"]+rect2["centerX"])/2))
+						position = self.convertReferenceFrame(distance, bearing)
+
+						if b["found"] == 0: # beacon has not been found				
+							print "Beacon %d: %s / %s [depth = %d (mm) at bearing = %d (deg) (x: %d, y: %d)]" % (b["id"], rect1["colour"], rect2["colour"], distance, bearing, position["x"], position["y"]) # beacon has successfully identified
+							self.publishBeacon(b["id"], rect1["colour"], rect2["colour"], position["x"], position["y"])
+							b["found"] = 1	
 
 						# draw visualisation of possible beacon colour candidates
 						# caution: only leave uncommented for testing purposes
 #						cv2.rectangle(output, (rect1["minX"], rect1["minY"]), (rect1["maxX"], rect1["maxY"]), self.colours[rect1["colour"]]["colour"], 3)
 #						cv2.rectangle(output, (rect2["minX"], rect2["minY"]), (rect2["maxX"], rect2["maxY"]), self.colours[rect2["colour"]]["colour"], 3)
-
+						
 		# display the visualisation
 		# caution: only leave uncommented for testing purposes
 #		cv2.imshow("images", output)
@@ -131,6 +150,42 @@ class locator:
 	# gets the bearing of the beacon relative to the robots reference frame (in degrees)
 	def getBearing(self, x):
 		return int(((x-320)/640)*62)
+
+
+	# converts the reference frame of the beacon from local to global
+	def convertReferenceFrame(self, distance, bearing):
+		rad = (self.robotHeading + bearing) * math.pi/180
+		return { "x": self.robotX + distance*math.sin(rad), "y": self.robotY + distance*math.cos(rad) }
+
+
+	# publish a detected beacon
+	def publishBeacon(self, beaconId, top, bottom, x, y):
+		self.publishBeaconComponent(beaconId * 4 + 0, (x, y, 0.01), (0.1, 0.02), (0, 0, 0))
+		self.publishBeaconComponent(beaconId * 4 + 1, (x, y, 0.1), (0.02, 0.16), (0, 0, 0))
+		self.publishBeaconComponent(beaconId * 4 + 2, (x, y, 0.23), (0.1, 0.1), self.colours[bottom]["colour"])
+		self.publishBeaconComponent(beaconId * 4 + 3, (x, y, 0.33), (0.1, 0.1), self.colours[top]["colour"])
+
+
+	# publish a component of a beacon
+	def publishBeaconComponent(self, markerID, posXYZ, scaleRZ, colourBGR):
+		marker = Marker()
+		marker.id = markerID
+		marker.header.frame_id = "/map"
+		marker.type = 3
+		marker.action = 0
+		marker.scale.x = scaleRZ[0]
+		marker.scale.y = scaleRZ[0]
+		marker.scale.z = scaleRZ[1]
+		marker.color.a = 1.0
+		marker.color.r = colourBGR[2]
+		marker.color.g = colourBGR[1]
+		marker.color.b = colourBGR[0]
+		marker.pose.orientation.w = 1.0
+		marker.pose.position.x = posXYZ[0]
+		marker.pose.position.y = posXYZ[1]
+		marker.pose.position.z = posXYZ[2]
+		self.beaconPublisher.publish(marker)
+
 
 
 if __name__ == '__main__':
