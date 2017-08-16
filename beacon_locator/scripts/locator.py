@@ -2,11 +2,14 @@
 from __future__ import division
 
 import rospy
+import tf
 from std_msgs.msg import String
 from sensor_msgs.msg import Image
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
+from geometry_msgs.msg import PointStamped
 from std_msgs.msg import ColorRGBA
+from tf2_msgs.msg import TFMessage
 
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
@@ -24,6 +27,7 @@ class locator:
 		self.depthSubscriber = rospy.Subscriber('/camera/depth/image_raw', Image, self.depthCallback) # subscribe to depth images from the Kinect
 		self.beaconPublisher = rospy.Publisher("/comp3431/beacons", Marker, queue_size=10) # publish beacons for RVIZ on the required topic
 		self.foundStatus = rospy.Publisher("/beacon_locator_node/status", String, queue_size=10)
+		self.telemListener = tf.TransformListener()
 
 		self.bridge = CvBridge() # create a bridge to convert from ROS images to OpenCV images
 		self.depthImage = None # stores the depth image set by the Kinect
@@ -44,11 +48,6 @@ class locator:
 		tmpBeacons = rospy.get_param("/beacon_locator_node/beacons") # load the valid beacons from the ros param
 		for b in tmpBeacons:
 			self.beacons.append({ "id": b["id"], "top": b["top"], "bottom": b["bottom"], "found": 0 })
-		
-
-		self.robotHeading = 0 # heading of the robot in radians
-		self.robotX = 0 # x coord of the robot in global frame
-		self.robotY = 0 # y coord of the robot in global frame
 
 
 	# callback function for when an rgb image is received from the Kinect sensor
@@ -96,8 +95,6 @@ class locator:
 		# caution: only leave uncommented for testing purposes
 #		cv2.imshow("images", output)
 #		cv2.waitKey(0)
-
-
 
 	# returns a list of rectangles the are possible candidates
 	def getColourRects(self, img, colour):
@@ -159,8 +156,21 @@ class locator:
 
 	# converts the reference frame of the beacon from local to global
 	def convertReferenceFrame(self, distance, bearing):
-		rad = (self.robotHeading + bearing) * math.pi/180
-		return { "x": self.robotX + distance*math.sin(rad), "y": self.robotY + distance*math.cos(rad) }
+		rad = - bearing * math.pi/180
+		try:
+			(trans,rot) = self.telemListener.lookupTransform('/map', '/base_link', rospy.Time(0))
+			bPoint=PointStamped()
+			bPoint.header.frame_id = "/base_link"
+			bPoint.header.stamp =rospy.Time(0)
+			bPoint.point.x=distance*math.cos(rad)
+			bPoint.point.y=distance*math.sin(rad)
+			bPoint.point.z=0.0
+			p = self.telemListener.transformPoint("/map",bPoint)
+			return { "x": p.point.x, "y": p.point.y }
+
+		except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
+			print e
+			return { "x": 0, "y": 0 }
 
 
 	# publish a detected beacon
@@ -236,11 +246,10 @@ class locator:
 	def markerAddRect(self, marker, col, p0, p1, p2, p3):
 		marker.points += [p0, p1, p2, p0, p2, p3]
 		marker.colors += [col, col, col, col, col, col]
-		
 
 
 if __name__ == '__main__':
-	rd = locator()
 	rospy.init_node('beacon_locator_node') # create node
+	rd = locator()
 	rospy.spin()
 	
