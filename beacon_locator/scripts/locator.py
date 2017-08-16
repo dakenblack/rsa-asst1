@@ -40,7 +40,7 @@ class locator:
 		
 		self.beacons = []
 		self.numBeaconsFound = 0
-		self.totalBeaconsToFind = 3
+		self.beaconsToFind = rospy.get_param("/beacon_locator_node/beaconsToFind")
 		tmpBeacons = rospy.get_param("/beacon_locator_node/beacons") # load the valid beacons from the ros param
 		for b in tmpBeacons:
 			self.beacons.append({ "id": b["id"], "top": b["top"], "bottom": b["bottom"], "found": 0 })
@@ -82,7 +82,7 @@ class locator:
 						bearing = self.getBearing(int((rect1["centerX"]+rect2["centerX"])/2))
 						position = self.convertReferenceFrame(distance, bearing)
 
-						if b["found"] == 0 and distance > 0.5 and self.numBeaconsFound != self.totalBeaconsToFind: # beacon for the first time been found			
+						if b["found"] == 0 and distance > 0.5 and self.numBeaconsFound != self.beaconsToFind: # beacon for the first time been found			
 							print "Beacon %d: %s / %s [depth = %.2f(m) at bearing = %d (deg) (x: %.2f, y: %.2f)]" % (b["id"], rect1["colour"], rect2["colour"], distance, bearing, position["x"], position["y"]) # beacon has successfully identified
 							self.publishBeacon(b["id"], rect1["colour"], rect2["colour"], position["x"], position["y"])
 							b["found"] = 1
@@ -219,7 +219,7 @@ class locator:
 
 
 		self.numBeaconsFound += 1
-		if self.numBeaconsFound == self.totalBeaconsToFind:
+		if self.numBeaconsFound == self.beaconsToFind:
 			print "Beacon discovery is Complete"
 			self.foundStatus.publish("complete")
 
@@ -228,28 +228,14 @@ class locator:
 
 	# adds a triangle to a specified marker
 	def markerAddTri(self, marker, col, p0, p1, p2):
-		marker.points.append(p0)
-		marker.points.append(p1)
-		marker.points.append(p2)
-		marker.colors.append(col)
-		marker.colors.append(col)
-		marker.colors.append(col)
+		marker.points += [p0, p1, p2]
+		marker.colors += [col, col, col]
 
 
 	# adds a rectangle to a specified marker
 	def markerAddRect(self, marker, col, p0, p1, p2, p3):
-		marker.points.append(p0)
-		marker.points.append(p1)
-		marker.points.append(p2)
-		marker.points.append(p0)
-		marker.points.append(p2)
-		marker.points.append(p3)
-		marker.colors.append(col)
-		marker.colors.append(col)
-		marker.colors.append(col)
-		marker.colors.append(col)
-		marker.colors.append(col)
-		marker.colors.append(col)
+		marker.points += [p0, p1, p2, p0, p2, p3]
+		marker.colors += [col, col, col, col, col, col]
 		
 
 

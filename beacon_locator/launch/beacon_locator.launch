@@ -9,5 +9,8 @@
                 { id: 4, top: pink, bottom: blue }
             ]
         </rosparam>
+	<rosparam>
+            beaconsToFind: 3
+        </rosparam>
     </node>
 </launch>
