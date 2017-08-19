@@ -2,14 +2,21 @@
 from __future__ import division
 
 import rospy
+import tf
 from std_msgs.msg import String
 from sensor_msgs.msg import Image
+from visualization_msgs.msg import Marker
+from geometry_msgs.msg import Point
+from geometry_msgs.msg import PointStamped
+from std_msgs.msg import ColorRGBA
+from tf2_msgs.msg import TFMessage
 
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
 
 import itertools
 import numpy as np
+import math
 
 
 class locator:
@@ -18,9 +25,11 @@ class locator:
 
 		self.rgbSubscriber = rospy.Subscriber('/camera/rgb/image_color', Image, self.rgbCallback) # subscribe to rgb images from the Kinect
 		self.depthSubscriber = rospy.Subscriber('/camera/depth/image_raw', Image, self.depthCallback) # subscribe to depth images from the Kinect
+		self.beaconPublisher = rospy.Publisher("/comp3431/beacons", Marker, queue_size=10) # publish beacons for RVIZ on the required topic
+		self.foundStatus = rospy.Publisher("/beacon_locator_node/status", String, queue_size=10)
+		self.telemListener = tf.TransformListener()
 
 		self.bridge = CvBridge() # create a bridge to convert from ROS images to OpenCV images
-		self.beacons = rospy.get_param("/beacon_locator_node/beacons") # load the valid beacons from the ros param
 		self.depthImage = None # stores the depth image set by the Kinect
 		
 		# define the colours which occur as halves of the beacons
@@ -32,6 +41,13 @@ class locator:
 			"blue":   { "colour": (255,   0,   0), "lowerBound": [ 95, 30, 30], "upperBound": [120, 255, 255] },
 			"green":  { "colour": (  0, 255,   0), "lowerBound": [ 40, 30, 30], "upperBound": [ 95, 255, 255] }
 		}
+		
+		self.beacons = []
+		self.numBeaconsFound = 0
+		self.beaconsToFind = rospy.get_param("/beacon_locator_node/beaconsToFind")
+		tmpBeacons = rospy.get_param("/beacon_locator_node/beacons") # load the valid beacons from the ros param
+		for b in tmpBeacons:
+			self.beacons.append({ "id": b["id"], "top": b["top"], "bottom": b["bottom"], "found": 0 })
 
 
 	# callback function for when an rgb image is received from the Kinect sensor
@@ -53,7 +69,7 @@ class locator:
 		# caution: only leave uncommented for testing purposes
 #		output = np.zeros((480,640,3), np.uint8)			
 
-		print "Frame Processed"
+		#print "Frame Processed"
 		# iterate through all pairs of detected rectangles
 		for rect1, rect2 in itertools.permutations(rects, 2):
 			# if the rect1 is positioned directly on top of rect2
@@ -61,19 +77,24 @@ class locator:
 				# check if beacon is a valid colour combination
 				for b in self.beacons:
 					if b["top"] == rect1["colour"] and b["bottom"] == rect2["colour"]:
-						print "Beacon %d: %s / %s [depth = %d (mm) at bearing = %d (deg)]" % (b["id"], rect1["colour"], rect2["colour"], self.getDepth(min(rect1["minX"], rect2["minX"]), max(rect1["maxX"], rect2["maxX"]), rect1["minY"], rect2["maxY"]), self.getBearing(int((rect1["centerX"]+rect2["centerX"])/2))) # beacon has successfully identified
+						distance = self.getDepth(min(rect1["minX"], rect2["minX"]), max(rect1["maxX"], rect2["maxX"]), rect1["minY"], rect2["maxY"]) / 1000
+						bearing = self.getBearing(int((rect1["centerX"]+rect2["centerX"])/2))
+						position = self.convertReferenceFrame(distance, bearing)
+
+						if b["found"] == 0 and distance > 0.5 and self.numBeaconsFound != self.beaconsToFind: # beacon for the first time been found			
+							print "Beacon %d: %s / %s [depth = %.2f(m) at bearing = %d (deg) (x: %.2f, y: %.2f)]" % (b["id"], rect1["colour"], rect2["colour"], distance, bearing, position["x"], position["y"]) # beacon has successfully identified
+							self.publishBeacon(b["id"], rect1["colour"], rect2["colour"], position["x"], position["y"])
+							b["found"] = 1
 
 						# draw visualisation of possible beacon colour candidates
 						# caution: only leave uncommented for testing purposes
 #						cv2.rectangle(output, (rect1["minX"], rect1["minY"]), (rect1["maxX"], rect1["maxY"]), self.colours[rect1["colour"]]["colour"], 3)
 #						cv2.rectangle(output, (rect2["minX"], rect2["minY"]), (rect2["maxX"], rect2["maxY"]), self.colours[rect2["colour"]]["colour"], 3)
-
+						
 		# display the visualisation
 		# caution: only leave uncommented for testing purposes
 #		cv2.imshow("images", output)
 #		cv2.waitKey(0)
-
-
 
 	# returns a list of rectangles the are possible candidates
 	def getColourRects(self, img, colour):
@@ -133,8 +154,102 @@ class locator:
 		return int(((x-320)/640)*62)
 
 
+	# converts the reference frame of the beacon from local to global
+	def convertReferenceFrame(self, distance, bearing):
+		rad = - bearing * math.pi/180
+		try:
+			(trans,rot) = self.telemListener.lookupTransform('/map', '/base_link', rospy.Time(0))
+			bPoint=PointStamped()
+			bPoint.header.frame_id = "/base_link"
+			bPoint.header.stamp =rospy.Time(0)
+			bPoint.point.x=distance*math.cos(rad)
+			bPoint.point.y=distance*math.sin(rad)
+			bPoint.point.z=0.0
+			p = self.telemListener.transformPoint("/map",bPoint)
+			return { "x": p.point.x, "y": p.point.y }
+
+		except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
+			print e
+			return { "x": 0, "y": 0 }
+
+
+	# publish a detected beacon
+	def publishBeacon(self, beaconId, top, bottom, x, y):
+		marker = Marker()
+		marker.id = beaconId
+		marker.header.frame_id = "/map"
+		marker.type = 11
+		marker.action = 0
+		marker.scale.x = 1.0
+		marker.scale.y = 1.0
+		marker.scale.z = 1.0
+		marker.pose.orientation.w = 1.0
+		marker.pose.position.x = x
+		marker.pose.position.y = y
+		marker.pose.position.z = 0
+
+		# compute the required colours
+		baseCol = ColorRGBA(0.0, 0.0, 0.0, 1.0)
+		topCol = ColorRGBA(self.colours[top]["colour"][2]/255, self.colours[top]["colour"][1]/255, self.colours[top]["colour"][0]/255, 1.0)
+		bottomCol = ColorRGBA(self.colours[bottom]["colour"][2]/255, self.colours[bottom]["colour"][1]/255, self.colours[bottom]["colour"][0]/255, 1.0)
+
+		# compute the bottom and top center points
+		bottomCenter = Point(0, 0, 0)
+		topCenter = Point (0, 0, 0.4)
+
+		incAngle = math.pi/8
+		curAngle = 0
+		lastPoints = [None, None, None, None, None, None, None]
+
+		for i in range(0, 17):
+			# produce a list of points representing the radial cross section of the marker
+			points = [None, None, None, None, None, None, None]
+			xComp = math.sin(curAngle)
+			yComp = math.cos(curAngle)
+			points[0] = Point(xComp*0.05, yComp*0.05, 0)
+			points[1] = Point(xComp*0.05, yComp*0.05, 0.01)
+			points[2] = Point(xComp*0.01, yComp*0.01, 0.01)
+			points[3] = Point(xComp*0.01, yComp*0.01, 0.2)
+			points[4] = Point(xComp*0.05, yComp*0.05, 0.2)
+			points[5] = Point(xComp*0.05, yComp*0.05, 0.3)
+			points[6] = Point(xComp*0.05, yComp*0.05, 0.4)
+
+			if lastPoints[0] is not None: # if we can construct a fae
+				self.markerAddTri(marker, baseCol, bottomCenter, lastPoints[0], points[0]) # bottom face
+				self.markerAddRect(marker, baseCol, lastPoints[0], points[0], points[1], lastPoints[1])
+				self.markerAddRect(marker, baseCol, lastPoints[1], points[1], points[2], lastPoints[2])
+				self.markerAddRect(marker, baseCol, lastPoints[2], points[2], points[3], lastPoints[3])
+				self.markerAddRect(marker, bottomCol, lastPoints[3], points[3], points[4], lastPoints[4])
+				self.markerAddRect(marker, bottomCol, lastPoints[4], points[4], points[5], lastPoints[5])
+				self.markerAddRect(marker, topCol, lastPoints[5], points[5], points[6], lastPoints[6])
+				self.markerAddTri(marker, topCol, topCenter, lastPoints[6], points[6]) # top face
+
+			curAngle += incAngle # increment the angle for each iteration
+			lastPoints = points # store the calculated cross section for the next iteration
+
+
+		self.numBeaconsFound += 1
+		if self.numBeaconsFound == self.beaconsToFind:
+			print "Beacon discovery is Complete"
+			self.foundStatus.publish("complete")
+
+		self.beaconPublisher.publish(marker)
+
+
+	# adds a triangle to a specified marker
+	def markerAddTri(self, marker, col, p0, p1, p2):
+		marker.points += [p0, p1, p2]
+		marker.colors += [col, col, col]
+
+
+	# adds a rectangle to a specified marker
+	def markerAddRect(self, marker, col, p0, p1, p2, p3):
+		marker.points += [p0, p1, p2, p0, p2, p3]
+		marker.colors += [col, col, col, col, col, col]
+
+
 if __name__ == '__main__':
-	rd = locator()
 	rospy.init_node('beacon_locator_node') # create node
+	rd = locator()
 	rospy.spin()
 	
