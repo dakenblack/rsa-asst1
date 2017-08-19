@@ -1,2 +1,9 @@
-This node can be run with:
+On the robot, type
+export TURTLEBOT_HOKUYO:=true
+before running the turtlebot launch file.
+This ensures it uses the hokuyo laser for the /scan topic instead of kinect data
+
+This package can be run with:
 roslaunch beacon_locator beacon_locator.launch
+
+
