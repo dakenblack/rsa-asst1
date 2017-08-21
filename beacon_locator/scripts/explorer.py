@@ -18,20 +18,30 @@ from std_msgs.msg import String
 from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import PoseStamped, Pose
 
+from threading import Lock
+
+#MAX_GOAL_DIST = 1
+#MIN_GOAL_DIST = 0.2
+
+OG_THRESHOLD = 50
 
 class Explorer():
     
     def __init__(self):
 
         self.startPose  = None      # the initial pose of the robot in the /map frame
+        self.goalPose   = None      # the pose we're currently navigating to
         self.returnHome = False     # denotes that we've found all the beacons
         self.done       = False     # denotes that we're done and don't need to do anything
+
+        self.gridLock   = Lock()
+        self.grid       = None
 
         self.tfListener = tf.TransformListener()
 
         self.goalPub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=1)
 
-        self.mapSub = rospy.Subscriber('/map', OccupancyGrid, self.gotMap)
+        self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.gotMap)
         self.statusSub = rospy.Subscriber('/beacon_locator_node/status', String, self.gotStatus)
 
         # only needed for testing
@@ -48,74 +58,123 @@ class Explorer():
         if self.done or self.returnHome:
             rospy.loginfo("Done with exploring")
             return
-        
-        MAX_GOAL_DIST = 1
-        MIN_GOAL_DIST = 0.2
 
-        RES_FACTOR = 5
+        self.gridLock.acquire()
+        rospy.loginfo(" ****** Got map! ****** ")
+        self.grid = grid
+        self.gridLock.release() 
 
-        OG_THRESHOLD = 20
-        
-        # we need to 'expand' the impassable areas of the map so that we don't try to go through walls if there's a tiny gap
-        rospy.loginfo("Map: \n%s" % str(grid.info))
-        gWidth = grid.info.width
-        gHeight = grid.info.height
-
-        newHeight = gHeight/RES_FACTOR
-        newWidth = gWidth/RES_FACTOR
-        newVals = [[0]*newHeight for i in range(newWidth)]
-        for i in range(gHeight*gWidth):
-            if grid.data[i] > OG_THRESHOLD:
-                newVals[(i/gHeight)/RES_FACTOR][(i%gWidth)/RES_FACTOR] = 100
-
-        newData = [0]*gWidth*gHeight
-        for i in range(gWidth*gHeight):
-            newData[i] = newVals[(i/gHeight)/RES_FACTOR][(i%gWidth)/RES_FACTOR]
-        grid.data = tuple(newData)
-
-        rospy.loginfo("Published new map")
-
-        self.mapPub.publish(grid)
-
-        # search for the closest frontier using bfs. If it's too close, find another one
-
-        # set a pose at some reasonable distance; 
-        # basically go through the points on the path until we reach the max distance we want to set a point at
-
+    def getRobotPose(self):
+        """ Get robot post in map frame """
+        if self.tfListener.frameExists("/base_link") and self.tfListener.frameExists("/map"):
+            try:
+                t = self.tfListener.getLatestCommonTime("/base_link", "/map")
+                p = PoseStamped()
+                p.header.frame_id = "/base_link"
+                p.header.stamp = t
+                mapPose = self.tfListener.transformPose("/map", p)
+                rospy.loginfo("Robot position is : %s" % mapPose)
+                return mapPose
+            except Exception as e:
+                rospy.logerr(str(e))
+        else:
+            rospy.logwarn("Waiting for /base_link and /map transforms to exist!")
+            return None
 
     def explore(self):
 
         while not rospy.is_shutdown():
 
             if self.startPose is None:
-                if self.tfListener.frameExists("/base_link") and self.tfListener.frameExists("/map"):
-                    try:
-                        t = self.tfListener.getLatestCommonTime("/base_link", "/map")
-                        #pos, rot = self.tfListener.lookupTransform("/base_link", "/map", t)
-                        p = PoseStamped()
-                        p.header.frame_id = "/base_link"
-                        p.header.stamp = t
-                        """
-                        p.pose.position.x = pos[0]
-                        p.pose.position.y = pos[1]
-                        p.pose.position.z = pos[2]
-                        p.pose.orientation.x = rot[0]
-                        p.pose.orientation.y = rot[1]
-                        p.pose.orientation.z = rot[2]
-                        p.pose.orientation.w = rot[3]
-                        """
-                        self.startPose = self.tfListener.transformPose("/map", p)
-                        rospy.loginfo("Initial position is : %s" % self.startPose)
-                    except Exception as e:
-                        rospy.logerr(str(e))
-                else:
-                    rospy.logwarn("Waiting for /base_link and /map transforms to exist!")
-
-            if self.returnHome:
+                self.startPose = self.getRobotPose()
+            
+            elif self.returnHome:
                 rospy.loginfo("Returning to start position")
                 self.goalPub.publish(self.startPose)
                 self.done = True
                 return
+
+            elif self.goalPose is not None:
+                
+                self.gridLock.acquire()
+                rospy.loginfo(" ****** Doing an explore! ****** ")
+                grid = self.grid
+
+                gWidth = grid.info.width
+                gHeight = grid.info.height
+
+                robotPose = self.getRobotPose()
+
+                robotGridPos = (
+                    abs(int((robotPose.pose.position.x - grid.info.origin.position.x) / grid.info.resolution)),
+                    abs(int((robotPose.pose.position.y - grid.info.origin.position.y) / grid.info.resolution))
+                    )
+                gdata = list(grid.data)
+                for x in range(6):
+                    for y in range(6):
+                        gdata[robotGridPos[0]-3+x + (robotGridPos[1]-3+y)*gHeight] = 0
+
+                # search for the closest frontier using bfs. If it's too close, find another one
+                explored = set()
+                # robot position in occupancy grid
+                curr = robotGridPos
+                frontier = {curr}
+                foundGoal = False
+                while frontier:
+                    curr = frontier.pop()
+                    explored.add(curr)
+                    # if cell is unknown, we've found our place to explore!
+                    if gdata[curr[0] + curr[1]*gWidth] == -1:
+                        rospy.loginfo("****** Found frontier at  = %s = node %s which is (%s, %s) in /map *****" % (curr, curr[0]+curr[1]*gWidth, curr[0]*grid.info.resolution+grid.info.origin.position.x, curr[0]*grid.info.resolution+grid.info.origin.position.y))
+                        foundGoal = True
+                        break
+                    potentialChildren = [
+                        (curr[0]+1, curr[1]-1),
+                        (curr[0]+1, curr[1]),
+                        (curr[0]+1, curr[1]+1),
+                        (curr[0],   curr[1]-1),
+                        (curr[0],   curr[1]+1),
+                        (curr[0]-1, curr[1]-1),
+                        (curr[0]-1, curr[1]),
+                        (curr[0]-1, curr[1]+1),
+                        ]
+                    for c in potentialChildren:
+                        # remove children that are off-map, explored, or untraversable
+                        if c not in explored and c[0] >= 0 and c[0] < gWidth and c[1] >= 0 and c[1] < gHeight and gdata[curr[0] + curr[1]*gWidth] < OG_THRESHOLD:
+                            frontier.add(c)
+                if not foundGoal:
+                    rospy.loginfo(" ****** Couldn't find a frontier! ****** ")
+                    self.goalPose = None
+                    self.gridLock.release()
+                    continue
+                            
+                # set a pose
+                self.goalPose = robotPose
+                self.goalPose.pose.position.x = (curr[0] * grid.info.resolution) + grid.info.origin.position.x
+                self.goalPose.pose.position.y = (curr[1] * grid.info.resolution) + grid.info.origin.position.y
+
+                self.gridLock.release()
+                
+                # rotate pose to opposite direction
+                quat = (
+                    self.goalPose.pose.orientation.x,
+                    self.goalPose.pose.orientation.y,
+                    self.goalPose.pose.orientation.z,
+                    self.goalPose.pose.orientation.w
+                    )
+                euler = tf.transformations.euler_from_quaternion(quat)
+                euler = (euler[0], euler[1], euler[2] + 180)
+                quat = tf.transformations.quaternion_from_euler(euler[0], euler[1], euler[2])
+                self.goalPose.pose.orientation.x = quat[0]
+                self.goalPose.pose.orientation.y = quat[1]
+                self.goalPose.pose.orientation.z = quat[2]
+                self.goalPose.pose.orientation.w = quat[3]
+
+                self.goalPose.header.stamp = rospy.Time.now()
+                rospy.loginfo("Publishing exploration node: %s", self.goalPose)
+                self.goalPub.publish(self.goalPose)
+                rospy.sleep(13)
+
 
             rospy.sleep(2)
 
