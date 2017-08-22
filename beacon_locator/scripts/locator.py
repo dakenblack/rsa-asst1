@@ -169,16 +169,16 @@ class locator:
 	def convertReferenceFrame(self, distance, bearing):
 		rad = -bearing * math.pi/180
 		try:
-#			(trans,rot) = self.telemListener.lookupTransform('/map', '/base_link', rospy.Time(0))
+			(trans,rot) = self.telemListener.lookupTransform('/map', '/base_link', rospy.Time(0))
 			bPoint = PointStamped()
 			bPoint.header.frame_id = "/base_link"
 			bPoint.header.stamp = rospy.Time(0)
 			bPoint.point.x = distance*math.cos(rad)
 			bPoint.point.y = distance*math.sin(rad)
 			bPoint.point.z = 0.0
-#			p = self.telemListener.transformPoint("/map",bPoint)
-#			return { "x": p.point.x, "y": p.point.y }
-			return { "x": bPoint.point.x, "y": bPoint.point.y }
+			p = self.telemListener.transformPoint("/map",bPoint)
+			return { "x": p.point.x, "y": p.point.y }
+#			return { "x": bPoint.point.x, "y": bPoint.point.y }
 
 		except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
 			print e
