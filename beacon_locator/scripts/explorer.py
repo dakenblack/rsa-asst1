@@ -20,12 +20,15 @@ from map_msgs.msg import OccupancyGridUpdate    # wtf
 from geometry_msgs.msg import PoseStamped, Pose
 
 from threading import Lock
+import math
 
 # maximum distance to set a goal
 MAX_GOAL_DIST = 1
+# only update the goal if we're within this distance of the last goal we set
+MIN_DIST_TO_PREV_GOAL = 0.3
 
 # threshold in the costmap we consider occupied
-OG_THRESHOLD = 50
+OG_THRESHOLD = 85
 # the value in the costmap representing unknown area (the area we want to explore!)
 UNKNOWN_COST = -1
 
@@ -35,6 +38,7 @@ class Explorer():
 
         self.startPose  = None      # the initial pose of the robot in the /map frame
         self.goalPose   = None      # the pose we're currently navigating to
+        self.prevGoal   = None      # denotes the goal we're currently navigating to as a tuple
         self.returnHome = False     # denotes that we've found all the beacons
         self.done       = False     # denotes that we're done and don't need to do anything
 
@@ -116,6 +120,7 @@ class Explorer():
 
     def findGoal(self):
         """ Find a point to navigate to based on the map we have """
+        
 
         self.gridLock.acquire()
         rospy.loginfo(" ****** Finding a goal! ****** ")
@@ -132,6 +137,15 @@ class Explorer():
             abs(int((robotPose.pose.position.x - self.gridMsg.info.origin.position.x) / self.gridMsg.info.resolution)),
             abs(int((robotPose.pose.position.y - self.gridMsg.info.origin.position.y) / self.gridMsg.info.resolution))
             )
+
+        # do a check against the last goal we published; if we're not within a certain distance of it, don't make a new goal
+        #if self.prevGoal is not None:
+        #    dist = math.sqrt((self.prevGoal[0]-robotGridPos[0])**2 + (self.prevGoal[1]-robotGridPos[1])**2) * self.gridMsg.info.resolution
+        #    rospy.loginfo(" ****** dist to prevgoal = %s ******" % dist)
+        #    if dist > MIN_DIST_TO_PREV_GOAL:
+        #        return True
+
+        start = robotGridPos
         
         # fill a few squares around the robot's current position with 0 so we hopefully move a little bit
         for x in range(6):
@@ -139,16 +153,19 @@ class Explorer():
                 grid[robotGridPos[0]-3+x + (robotGridPos[1]-3+y)*gHeight] = 0
 
         # search for the closest frontier using bfs
-        explored = set()
+        explored = {}
         # robot position in occupancy grid
-        curr = robotGridPos
-        frontier = {curr}
+        frontier = {start : None}
         foundGoal = False
         t = 0
+        curr = None
+        prev = None
         while frontier:
             t += 1
-            curr = frontier.pop()
-            explored.add(curr)
+            # pop a key, value pair from the dictionary
+            curr, prev = frontier.popitem()
+            # put the key (representing a point) and the value (representing its parent in the bfs) into the explored dict
+            explored[curr] = prev
             # if cell is unknown, we've found where we wanna go!
             if grid[curr[0] + curr[1]*gWidth] == UNKNOWN_COST:
                 rospy.loginfo("****** %s nodes traversed ******", t)
@@ -170,17 +187,31 @@ class Explorer():
             for c in potentialChildren:
                 # remove children that are off-map, explored, or untraversable
                 if c not in explored and c[0] >= 0 and c[0] < gWidth and c[1] >= 0 and c[1] < gHeight and grid[curr[0] + curr[1]*gWidth] < OG_THRESHOLD:
-                    frontier.add(c)
+                    # set the 'prev' of this child to be the current node we're expanding
+                    frontier[c] = curr
         if not foundGoal:
             rospy.loginfo(" ****** Couldn't find a frontier! ****** ")
             self.goalPose = None
             self.gridLock.release()
             return False
-                    
+        
+        # at this point we need an already explored point to set as the goal
+        # simple solution:
+        goal = explored[curr]  # use previous point; it should be explored
+        # better solution:
+        # basically walk backwards along the path until we're with a certain distance of the robot
+        dist = MAX_GOAL_DIST
+        while dist >= MAX_GOAL_DIST:
+            rospy.loginfo("dist: %s" % dist)
+            goal = explored[goal]
+            # get euclidean distance and multiply by resolution to get metres
+            dist = math.sqrt((goal[0]-start[0])**2 + (goal[1]-start[1])**2) * self.gridMsg.info.resolution
+
         # set a pose
+        self.prevGoal = goal
         self.goalPose = robotPose
-        self.goalPose.pose.position.x = (curr[0] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.x
-        self.goalPose.pose.position.y = (curr[1] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.y
+        self.goalPose.pose.position.x = (goal[0] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.x
+        self.goalPose.pose.position.y = (goal[1] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.y
 
         # we don't update the stamp because of weird tranform timing reasons. idk why but commenting this out seems to work
         #self.goalPose.header.stamp = grid.header.stamp
