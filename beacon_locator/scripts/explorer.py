@@ -37,20 +37,20 @@ class Explorer():
         self.done       = False     # denotes that we're done and don't need to do anything
 
         self.gridLock   = Lock()    # for locking the grid data
-        self.grid       = None      # the data as a mutable list
+        self.grid       = None      # the occupancy grid data as a mutable list
 
-        self.gridMsg    = None      # unmodified occupancy grid
+        self.gridMsg    = None      # unmodified occupancy grid message
 
         self.tfListener = tf.TransformListener()
 
         self.goalPub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=1)
 
         self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.gotMap)
-        self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.gotMapUpdate)
+        self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.gotMapUpdate, queue_size=2)
         self.statusSub = rospy.Subscriber('/beacon_locator_node/status', String, self.gotStatus)
 
         # only needed for testing
-        #self.mapPub = rospy.Publisher('/explore_map', OccupancyGrid, queue_size=5) 
+        #self.mapPub = rospy.Publisher('/explore_map', OccupancyGrid, queue_size=1) 
     
     def gotStatus(self, status):
 
@@ -77,12 +77,16 @@ class Explorer():
         self.gridLock.acquire()
         rospy.loginfo(" ****** Got map update - size %s pos (%s, %s) ****** " % (grid.width*grid.height, grid.x, grid.y))
         i = 0
-        # pretty sure this is correct
-        for y in xrange(grid.y, grid.y+grid.height):
-            for x in xrange(grid.x, grid.x+grid.width):
-                self.grid[x + y*self.gridMsg.info.height] = grid.data[i]
-                i += 1
+        # if the update is the same size as the original map, we can just replace the whole data array
+        if grid.width*grid.height == self.gridMsg.info.height*self.gridMsg.info.width:
+            self.grid = list(grid.data)
+        else:
+            for y in xrange(grid.y, grid.y+grid.height):
+                for x in xrange(grid.x, grid.x+grid.width):
+                    self.grid[x + y*self.gridMsg.info.height] = grid.data[i]
+                    i += 1
         self.gridLock.release() 
+        rospy.loginfo(" ****** Done updating map ****** ")
 
         # testing
         #self.gridMsg.data = tuple(self.grid)
@@ -114,6 +118,9 @@ class Explorer():
         gWidth = self.gridMsg.info.width
    
         robotPose = self.getRobotPose()
+        if robotPose is None:
+            self.gridLock.release()
+            return False
 
         robotGridPos = (
             abs(int((robotPose.pose.position.x - self.gridMsg.info.origin.position.x) / self.gridMsg.info.resolution)),
