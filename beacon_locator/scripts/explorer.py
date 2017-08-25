@@ -21,10 +21,12 @@ from geometry_msgs.msg import PoseStamped, Pose
 
 from threading import Lock
 
-#MAX_GOAL_DIST = 1
-#MIN_GOAL_DIST = 0.2
+# maximum distance to set a goal
+MAX_GOAL_DIST = 1
 
+# threshold in the costmap we consider occupied
 OG_THRESHOLD = 50
+# the value in the costmap representing unknown area (the area we want to explore!)
 UNKNOWN_COST = -1
 
 class Explorer():
@@ -59,18 +61,18 @@ class Explorer():
             self.returnHome = True
     
     def gotMap(self, grid):
-
+        """ This is only called once or twice at the start; from then on the costmap is published as updates """
         if self.done or self.returnHome:
             return
 
         self.gridLock.acquire()
-        rospy.loginfo(" ****** Got map - size %s pos (%s, %s) ****** " % (grid.info.width*grid.info.height, grid.info.origin.position.x, grid.info.origin.position.y))
+        #rospy.loginfo(" ****** Got map - size %s pos (%s, %s) ****** " % (grid.info.width*grid.info.height, grid.info.origin.position.x, grid.info.origin.position.y))
         self.gridMsg = grid
         self.grid = list(grid.data)
         self.gridLock.release() 
     
     def gotMapUpdate(self, grid):
-
+        """ A map update may or may not contain the whole map """
         if self.done or self.returnHome:
             return
 
@@ -80,6 +82,8 @@ class Explorer():
         # if the update is the same size as the original map, we can just replace the whole data array
         if grid.width*grid.height == self.gridMsg.info.height*self.gridMsg.info.width:
             self.grid = list(grid.data)
+
+        # otherwise we only want to update the section that is in this update
         else:
             for y in xrange(grid.y, grid.y+grid.height):
                 for x in xrange(grid.x, grid.x+grid.width):
@@ -94,7 +98,7 @@ class Explorer():
         #self.mapPub.publish(self.gridMsg)
 
     def getRobotPose(self):
-        """ Get robot post in map frame """
+        """ Get robot pose in map frame """
         if self.tfListener.frameExists("/base_link") and self.tfListener.frameExists("/map"):
             try:
                 t = self.tfListener.getLatestCommonTime("/base_link", "/map")
@@ -111,6 +115,8 @@ class Explorer():
             return None
 
     def findGoal(self):
+        """ Find a point to navigate to based on the map we have """
+
         self.gridLock.acquire()
         rospy.loginfo(" ****** Finding a goal! ****** ")
         grid = self.grid
@@ -126,7 +132,8 @@ class Explorer():
             abs(int((robotPose.pose.position.x - self.gridMsg.info.origin.position.x) / self.gridMsg.info.resolution)),
             abs(int((robotPose.pose.position.y - self.gridMsg.info.origin.position.y) / self.gridMsg.info.resolution))
             )
-
+        
+        # fill a few squares around the robot's current position with 0 so we hopefully move a little bit
         for x in range(6):
             for y in range(6):
                 grid[robotGridPos[0]-3+x + (robotGridPos[1]-3+y)*gHeight] = 0
@@ -175,6 +182,7 @@ class Explorer():
         self.goalPose.pose.position.x = (curr[0] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.x
         self.goalPose.pose.position.y = (curr[1] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.y
 
+        # we don't update the stamp because of weird tranform timing reasons. idk why but commenting this out seems to work
         #self.goalPose.header.stamp = grid.header.stamp
         self.gridLock.release()
         
@@ -194,7 +202,7 @@ class Explorer():
         self.goalPose.pose.orientation.z = quat[2]
         self.goalPose.pose.orientation.w = quat[3]
 
-        rospy.loginfo("Publishing exploration node: %s", self.goalPose)
+        rospy.loginfo(" ****** Publishing exploration node: %s ******", self.goalPose)
         self.goalPub.publish(self.goalPose)
         return True
 
