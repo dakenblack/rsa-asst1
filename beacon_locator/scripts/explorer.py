@@ -23,12 +23,12 @@ from threading import Lock
 import math
 
 # maximum distance to set a goal
-MAX_GOAL_DIST = 1
+MAX_GOAL_DIST = 0.4
 # only update the goal if we're within this distance of the last goal we set
-MIN_DIST_TO_PREV_GOAL = 0.3
+#MIN_DIST_TO_PREV_GOAL = 0.3
 
 # threshold in the costmap we consider occupied
-OG_THRESHOLD = 85
+OG_THRESHOLD = 90
 # the value in the costmap representing unknown area (the area we want to explore!)
 UNKNOWN_COST = -1
 
@@ -101,7 +101,7 @@ class Explorer():
         #self.gridMsg.header.stamp = rospy.Time.now()
         #self.mapPub.publish(self.gridMsg)
 
-    def getRobotPose(self):
+    def getRobotPose(self, xOffset=0):
         """ Get robot pose in map frame """
         if self.tfListener.frameExists("/base_link") and self.tfListener.frameExists("/map"):
             try:
@@ -109,48 +109,53 @@ class Explorer():
                 p = PoseStamped()
                 p.header.frame_id = "/base_link"
                 p.header.stamp = t
+                p.pose.position.x = xOffset
                 mapPose = self.tfListener.transformPose("/map", p)
-                rospy.loginfo("Robot position is : %s" % mapPose)
+                #rospy.loginfo("Robot position is : %s" % mapPose)
                 return mapPose
             except Exception as e:
                 rospy.logerr(str(e))
         else:
             rospy.logwarn("Waiting for /base_link and /map transforms to exist!")
-            return None
+            return None 
 
     def findGoal(self):
         """ Find a point to navigate to based on the map we have """
         
-
-        self.gridLock.acquire()
         rospy.loginfo(" ****** Finding a goal! ****** ")
+        self.gridLock.acquire()
         grid = self.grid
         gHeight = self.gridMsg.info.height
         gWidth = self.gridMsg.info.width
    
-        robotPose = self.getRobotPose()
-        if robotPose is None:
+        if self.prevGoal is not None:
+            self.robotPose = self.getRobotPose()
+        else:
+            self.robotPose = self.getRobotPose(0.4)
+
+        if self.robotPose is None:
             self.gridLock.release()
             return False
 
         robotGridPos = (
-            abs(int((robotPose.pose.position.x - self.gridMsg.info.origin.position.x) / self.gridMsg.info.resolution)),
-            abs(int((robotPose.pose.position.y - self.gridMsg.info.origin.position.y) / self.gridMsg.info.resolution))
+            abs(int((self.robotPose.pose.position.x - self.gridMsg.info.origin.position.x) / self.gridMsg.info.resolution)),
+            abs(int((self.robotPose.pose.position.y - self.gridMsg.info.origin.position.y) / self.gridMsg.info.resolution))
             )
+        start = robotGridPos
 
         # do a check against the last goal we published; if we're not within a certain distance of it, don't make a new goal
-        #if self.prevGoal is not None:
-        #    dist = math.sqrt((self.prevGoal[0]-robotGridPos[0])**2 + (self.prevGoal[1]-robotGridPos[1])**2) * self.gridMsg.info.resolution
-        #    rospy.loginfo(" ****** dist to prevgoal = %s ******" % dist)
-        #    if dist > MIN_DIST_TO_PREV_GOAL:
-        #        return True
-
-        start = robotGridPos
-        
-        # fill a few squares around the robot's current position with 0 so we hopefully move a little bit
-        for x in range(6):
-            for y in range(6):
-                grid[robotGridPos[0]-3+x + (robotGridPos[1]-3+y)*gHeight] = 0
+        if self.prevGoal is not None:
+            #dist = math.sqrt((self.prevGoal[0]-robotGridPos[0])**2 + (self.prevGoal[1]-robotGridPos[1])**2) * self.gridMsg.info.resolution
+            #rospy.loginfo(" ****** dist to prevgoal = %s ******" % dist)
+            #if dist > MIN_DIST_TO_PREV_GOAL:
+            #    self.gridLock.release()
+            #    return True
+            pass
+        else:
+            self.gridLock.release()
+            rospy.loginfo(" ****** Publishing start plus offset ******")
+            self.pubGoal(start)
+            return True
 
         # search for the closest frontier using bfs
         explored = {}
@@ -166,10 +171,14 @@ class Explorer():
             curr, prev = frontier.popitem()
             # put the key (representing a point) and the value (representing its parent in the bfs) into the explored dict
             explored[curr] = prev
-            # if cell is unknown, we've found where we wanna go!
-            if grid[curr[0] + curr[1]*gWidth] == UNKNOWN_COST:
+            value = grid[curr[0] + curr[1]*gWidth]
+
+            if value == UNKNOWN_COST:
+                # we actually want the previous node; we don't want the goal to be in unknown space
+                if value == UNKNOWN_COST:
+                    curr = prev
+                rospy.loginfo("Found node at %s with value %s")
                 rospy.loginfo("****** %s nodes traversed ******", t)
-                #rospy.loginfo("****** Found frontier in grid at = %s, value =  %s which is (%s, %s) in /map *****" % (curr, gdata[curr[0]+curr[1]*gWidth], curr[0]*grid.info.resolution+grid.info.origin.position.x, curr[0]*grid.info.resolution+grid.info.origin.position.y))
                 foundGoal = True
                 break
 
@@ -195,27 +204,30 @@ class Explorer():
             self.gridLock.release()
             return False
         
-        # at this point we need an already explored point to set as the goal
-        # simple solution:
-        goal = explored[curr]  # use previous point; it should be explored
-        # better solution:
+        goal = curr
+
         # basically walk backwards along the path until we're with a certain distance of the robot
         dist = MAX_GOAL_DIST
         while dist >= MAX_GOAL_DIST:
             rospy.loginfo("dist: %s" % dist)
             goal = explored[goal]
             # get euclidean distance and multiply by resolution to get metres
+            #rospy.loginfo("goal %s, curr %s, explored[curr] %s, start %s, self.prevGoal %s" %(goal, curr, explored[curr], start, self.prevGoal))
             dist = math.sqrt((goal[0]-start[0])**2 + (goal[1]-start[1])**2) * self.gridMsg.info.resolution
 
+        self.gridLock.release()
         # set a pose
-        self.prevGoal = goal
-        self.goalPose = robotPose
-        self.goalPose.pose.position.x = (goal[0] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.x
-        self.goalPose.pose.position.y = (goal[1] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.y
+        self.pubGoal(goal) 
+        return True
+
+    def pubGoal(self, goalTuple):
+        self.prevGoal = goalTuple
+        self.goalPose = self.robotPose
+        self.goalPose.pose.position.x = (self.prevGoal[0] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.x
+        self.goalPose.pose.position.y = (self.prevGoal[1] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.y
 
         # we don't update the stamp because of weird tranform timing reasons. idk why but commenting this out seems to work
         #self.goalPose.header.stamp = grid.header.stamp
-        self.gridLock.release()
         
         # rotate pose to opposite direction (idk if this is correct but it seems to be ok)
         # we do this to create some variance and make sure the rover spins around when it arrives at its location
@@ -235,11 +247,11 @@ class Explorer():
 
         rospy.loginfo(" ****** Publishing exploration node: %s ******", self.goalPose)
         self.goalPub.publish(self.goalPose)
-        return True
 
     def explore(self):
 
         while not rospy.is_shutdown():
+            rospy.loginfo(" ****** looping ******")
 
             if self.startPose is None:
                 self.startPose = self.getRobotPose()
