@@ -83,7 +83,7 @@ class locator:
 				if distance > 0.5 and position["x"] is not None and position["y"] is not None: # rectangles have been located
 					for beacon in self.beacons: # check if beacon is a valid colour combination
 						if beacon["top"] == rect1["colour"] and beacon["bottom"] == rect2["colour"]:	
-							print "Beacon %d: %s / %s [depth = %.2f(m) at bearing = %d (deg) (x: %.2f, y: %.2f)]" % (beacon["id"], beacon["top"], beacon["bottom"], distance, bearing, position["x"], position["y"]) # beacon has successfully identified
+							print "Beacon %d: %s/%s [dist:%.2f(m) at brg:%.1f(deg) (x:%.2f, y:%.2f)]" % (beacon["id"], beacon["top"], beacon["bottom"], distance, bearing, position["x"], position["y"]) # beacon has successfully identified
 							
 							if len(beacon["positions"]) == 25: # keep only the last 25 positions
 								del beacon["positions"][0]					
@@ -162,12 +162,12 @@ class locator:
 
 	# gets the bearing of the beacon relative to the robots reference frame (in degrees)
 	def getBearing(self, x):
-		return int(((x-320)/640)*62)
+		return -((x-320)/640) * 62
 
 
 	# converts the reference frame of the beacon from local to global
 	def convertReferenceFrame(self, distance, bearing):
-		rad = -bearing * math.pi/180
+		rad = bearing * math.pi / 180 # convert bearing to radians
 		try:
 			(trans,rot) = self.telemListener.lookupTransform('/map', '/base_link', rospy.Time(0))
 			bPoint = PointStamped()
