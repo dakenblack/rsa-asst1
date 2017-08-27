@@ -5,7 +5,7 @@
     Subscribes to a String on the '/beacon_locator_node/status' topic
     Publishes a PoseStamped to the '/move_base/simple_goal' topic
     First records the initial position of the rover (when this node starts)
-    Turns the occupancy grid into a costmap-like matrix so that it can better evaluate frontiers
+    Uses the global costmap published by move_base
     Finds closest unobstructed frontier using breadth first search and sends the robot there
     Once all the beacons are found, it sends the robot back to its initial position
     By: Nuno Das Neves
@@ -20,10 +20,10 @@ from map_msgs.msg import OccupancyGridUpdate    # wtf
 from geometry_msgs.msg import PoseStamped, Pose
 
 from threading import Lock
-import math
+import math, random
 
 # maximum distance to set a goal
-MAX_GOAL_DIST = 0.4
+MAX_GOAL_DIST = 0.5
 # only update the goal if we're within this distance of the last goal we set
 #MIN_DIST_TO_PREV_GOAL = 0.3
 
@@ -41,6 +41,8 @@ class Explorer():
         self.prevGoal   = None      # denotes the goal we're currently navigating to as a tuple
         self.returnHome = False     # denotes that we've found all the beacons
         self.done       = False     # denotes that we're done and don't need to do anything
+
+        self.rotsLeft   = 2         # when this is > 0, the robot will turn on the spot 120 degrees this many times before continuing
 
         self.gridLock   = Lock()    # for locking the grid data
         self.grid       = None      # the occupancy grid data as a mutable list
@@ -70,7 +72,6 @@ class Explorer():
             return
 
         self.gridLock.acquire()
-        #rospy.loginfo(" ****** Got map - size %s pos (%s, %s) ****** " % (grid.info.width*grid.info.height, grid.info.origin.position.x, grid.info.origin.position.y))
         self.gridMsg = grid
         self.grid = list(grid.data)
         self.gridLock.release() 
@@ -108,7 +109,7 @@ class Explorer():
                 t = self.tfListener.getLatestCommonTime("/base_link", "/map")
                 p = PoseStamped()
                 p.header.frame_id = "/base_link"
-                p.header.stamp = t
+                #p.header.stamp = t
                 p.pose.position.x = xOffset
                 mapPose = self.tfListener.transformPose("/map", p)
                 #rospy.loginfo("Robot position is : %s" % mapPose)
@@ -128,34 +129,25 @@ class Explorer():
         gHeight = self.gridMsg.info.height
         gWidth = self.gridMsg.info.width
    
-        if self.prevGoal is not None:
-            self.robotPose = self.getRobotPose()
-        else:
-            self.robotPose = self.getRobotPose(0.4)
+        self.robotPose = self.getRobotPose()
 
         if self.robotPose is None:
             self.gridLock.release()
             return False
 
-        robotGridPos = (
+        # change the pose in the map frame into an xy position in the 2d occupancy grid
+        start = (
             abs(int((self.robotPose.pose.position.x - self.gridMsg.info.origin.position.x) / self.gridMsg.info.resolution)),
             abs(int((self.robotPose.pose.position.y - self.gridMsg.info.origin.position.y) / self.gridMsg.info.resolution))
             )
-        start = robotGridPos
 
         # do a check against the last goal we published; if we're not within a certain distance of it, don't make a new goal
-        if self.prevGoal is not None:
-            #dist = math.sqrt((self.prevGoal[0]-robotGridPos[0])**2 + (self.prevGoal[1]-robotGridPos[1])**2) * self.gridMsg.info.resolution
+        #if self.prevGoal is not None:
+            #dist = math.sqrt((self.prevGoal[0]-start[0])**2 + (self.prevGoal[1]-start[1])**2) * self.gridMsg.info.resolution
             #rospy.loginfo(" ****** dist to prevgoal = %s ******" % dist)
             #if dist > MIN_DIST_TO_PREV_GOAL:
             #    self.gridLock.release()
             #    return True
-            pass
-        else:
-            self.gridLock.release()
-            rospy.loginfo(" ****** Publishing start plus offset ******")
-            self.pubGoal(start)
-            return True
 
         # search for the closest frontier using bfs
         explored = {}
@@ -195,7 +187,9 @@ class Explorer():
                 ]
             for c in potentialChildren:
                 # remove children that are off-map, explored, or untraversable
-                if c not in explored and c[0] >= 0 and c[0] < gWidth and c[1] >= 0 and c[1] < gHeight and grid[curr[0] + curr[1]*gWidth] < OG_THRESHOLD:
+                if c not in explored \
+                        and c[0] >= 0 and c[0] < gWidth and c[1] >= 0 and c[1] < gHeight \
+                        and grid[c[0] + c[1]*gWidth] < OG_THRESHOLD:
                     # set the 'prev' of this child to be the current node we're expanding
                     frontier[c] = curr
         if not foundGoal:
@@ -231,22 +225,27 @@ class Explorer():
         
         # rotate pose to opposite direction (idk if this is correct but it seems to be ok)
         # we do this to create some variance and make sure the rover spins around when it arrives at its location
-        quat = (
-            self.goalPose.pose.orientation.x,
-            self.goalPose.pose.orientation.y,
-            self.goalPose.pose.orientation.z,
-            self.goalPose.pose.orientation.w
-            )
-        euler = tf.transformations.euler_from_quaternion(quat)
-        euler = (euler[0], euler[1], euler[2] + 180)
-        quat = tf.transformations.quaternion_from_euler(euler[0], euler[1], euler[2])
-        self.goalPose.pose.orientation.x = quat[0]
-        self.goalPose.pose.orientation.y = quat[1]
-        self.goalPose.pose.orientation.z = quat[2]
-        self.goalPose.pose.orientation.w = quat[3]
+        self.goalPose = self.rotPose(self.goalPose, random.randint(60, 120))
 
         rospy.loginfo(" ****** Publishing exploration node: %s ******", self.goalPose)
         self.goalPub.publish(self.goalPose)
+
+    def rotPose(self, aPose, rotOffset):
+        quat = (
+            aPose.pose.orientation.x,
+            aPose.pose.orientation.y,
+            aPose.pose.orientation.z,
+            aPose.pose.orientation.w
+            )
+        euler = tf.transformations.euler_from_quaternion(quat)
+        euler = (euler[0], euler[1], euler[2] + rotOffset)
+        quat = tf.transformations.quaternion_from_euler(euler[0], euler[1], euler[2])
+        aPose.pose.orientation.x = quat[0]
+        aPose.pose.orientation.y = quat[1]
+        aPose.pose.orientation.z = quat[2]
+        aPose.pose.orientation.w = quat[3]
+
+        return aPose
 
     def explore(self):
 
@@ -255,12 +254,31 @@ class Explorer():
 
             if self.startPose is None:
                 self.startPose = self.getRobotPose()
+                # move forward slightly to fix dwa planner bug (footprint not set error)
+                while self.goalPose is None:
+                    self.goalPose = self.getRobotPose(xOffset=0.3)
+                    if self.goalPose is not None:
+                        self.goalPub.publish(self.goalPose)
+                        rospy.sleep(5)
+                    rospy.sleep(1)
             
             elif self.returnHome:
                 rospy.loginfo("Returning to start position")
                 self.goalPub.publish(self.startPose)
                 self.done = True
                 return
+            
+            # this makes the robot spin a bit at the start to hopefully populate the costmap behind its starting location
+            elif self.rotsLeft > 0:
+                rospy.loginfo(" ****** %s rots left, rotating on the spot! ******" % self.rotsLeft)
+                self.goalPose = self.getRobotPose()
+                if self.goalPose is not None:
+                    self.goalPose = self.rotPose(self.goalPose, 160)
+                    self.goalPub.publish(self.goalPose)
+                    self.rotsLeft -= 1
+                    # give it time to do its thing
+                    rospy.sleep(15)
+                    continue
 
             elif self.grid is not None and self.gridMsg is not None and self.findGoal():
                 rospy.sleep(15)
