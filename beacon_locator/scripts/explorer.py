@@ -17,10 +17,10 @@ import tf
 from std_msgs.msg import String
 from nav_msgs.msg import OccupancyGrid
 from map_msgs.msg import OccupancyGridUpdate    # wtf
-from geometry_msgs.msg import PoseStamped, Pose
+from geometry_msgs.msg import PoseStamped, Pose, Quaternion
 
 from threading import Lock
-import math, random
+import math, random, copy
 
 # maximum distance to set a goal
 MAX_GOAL_DIST = 0.5
@@ -28,9 +28,11 @@ MAX_GOAL_DIST = 0.5
 #MIN_DIST_TO_PREV_GOAL = 0.3
 
 # threshold in the costmap we consider occupied
-OG_THRESHOLD = 90
+OG_THRESHOLD = 78
 # the value in the costmap representing unknown area (the area we want to explore!)
 UNKNOWN_COST = -1
+
+RANDOM_ROT = 3.14/2
 
 class Explorer():
     
@@ -38,7 +40,7 @@ class Explorer():
 
         self.startPose  = None      # the initial pose of the robot in the /map frame
         self.goalPose   = None      # the pose we're currently navigating to
-        self.prevGoal   = None      # denotes the goal we're currently navigating to as a tuple
+        #self.prevGoal   = None      # denotes the goal we're currently navigating to as a tuple
         self.returnHome = False     # denotes that we've found all the beacons
         self.done       = False     # denotes that we're done and don't need to do anything
 
@@ -120,6 +122,18 @@ class Explorer():
             rospy.logwarn("Waiting for /base_link and /map transforms to exist!")
             return None 
 
+    def gridToPose(self, aGridTuple):
+        aPose = copy.deepcopy(self.robotPose)
+        aPose.pose.position.x = (aGridTuple[0] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.x
+        aPose.pose.position.y = (aGridTuple[1] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.y
+        return aPose
+
+    def poseToGrid(self, aPose):
+        return ( 
+            abs(int((aPose.pose.position.x - self.gridMsg.info.origin.position.x) / self.gridMsg.info.resolution)),
+            abs(int((aPose.pose.position.y - self.gridMsg.info.origin.position.y) / self.gridMsg.info.resolution))
+            )
+
     def findGoal(self):
         """ Find a point to navigate to based on the map we have """
         
@@ -136,18 +150,16 @@ class Explorer():
             return False
 
         # change the pose in the map frame into an xy position in the 2d occupancy grid
-        start = (
-            abs(int((self.robotPose.pose.position.x - self.gridMsg.info.origin.position.x) / self.gridMsg.info.resolution)),
-            abs(int((self.robotPose.pose.position.y - self.gridMsg.info.origin.position.y) / self.gridMsg.info.resolution))
-            )
+        start = self.poseToGrid(self.robotPose)
 
+        # THIS IS BAD
         # do a check against the last goal we published; if we're not within a certain distance of it, don't make a new goal
         #if self.prevGoal is not None:
-            #dist = math.sqrt((self.prevGoal[0]-start[0])**2 + (self.prevGoal[1]-start[1])**2) * self.gridMsg.info.resolution
-            #rospy.loginfo(" ****** dist to prevgoal = %s ******" % dist)
-            #if dist > MIN_DIST_TO_PREV_GOAL:
-            #    self.gridLock.release()
-            #    return True
+        #    dist = math.sqrt((self.prevGoal[0]-start[0])**2 + (self.prevGoal[1]-start[1])**2) * self.gridMsg.info.resolution
+        #    rospy.loginfo(" ****** dist to prevgoal = %s ******" % dist)
+        #    if dist > MIN_DIST_TO_PREV_GOAL:
+        #        self.gridLock.release()
+        #        return True
 
         # search for the closest frontier using bfs
         explored = {}
@@ -167,10 +179,9 @@ class Explorer():
 
             if value == UNKNOWN_COST:
                 # we actually want the previous node; we don't want the goal to be in unknown space
-                if value == UNKNOWN_COST:
-                    curr = prev
-                rospy.loginfo("Found node at %s with value %s")
-                rospy.loginfo("****** %s nodes traversed ******", t)
+                curr = prev
+                #rospy.loginfo("Found node at %s with value %s")
+                rospy.loginfo("****** Found unknown node; %s nodes traversed ******", t)
                 foundGoal = True
                 break
 
@@ -190,14 +201,19 @@ class Explorer():
                 if c not in explored \
                         and c[0] >= 0 and c[0] < gWidth and c[1] >= 0 and c[1] < gHeight \
                         and grid[c[0] + c[1]*gWidth] < OG_THRESHOLD:
+                        #and grid[c[0] + c[1]*gWidth] != UNKNOWN_COST:
                     # set the 'prev' of this child to be the current node we're expanding
                     frontier[c] = curr
+
+        # if we can't find unknown space to explore, just go to the furthest away passable point
+        # NOTE: This could lead to just wandering the centre of the maze - might not be an issue though
         if not foundGoal:
-            rospy.loginfo(" ****** Couldn't find a frontier! ****** ")
-            self.goalPose = None
-            self.gridLock.release()
-            return False
-        
+            rospy.loginfo(" ****** Couldn't find a frontier! Exploring furthest point ****** ")
+            # removed so robot won't stop progress
+            #self.goalPose = None
+            #self.gridLock.release()
+            #return False
+
         goal = curr
 
         # basically walk backwards along the path until we're with a certain distance of the robot
@@ -211,24 +227,44 @@ class Explorer():
 
         self.gridLock.release()
         # set a pose
-        self.pubGoal(goal) 
-        return True
 
-    def pubGoal(self, goalTuple):
-        self.prevGoal = goalTuple
-        self.goalPose = self.robotPose
-        self.goalPose.pose.position.x = (self.prevGoal[0] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.x
-        self.goalPose.pose.position.y = (self.prevGoal[1] * self.gridMsg.info.resolution) + self.gridMsg.info.origin.position.y
+        self.goalPose = self.gridToPose(goal)
 
         # we don't update the stamp because of weird tranform timing reasons. idk why but commenting this out seems to work
         #self.goalPose.header.stamp = grid.header.stamp
-        
-        # rotate pose to opposite direction (idk if this is correct but it seems to be ok)
-        # we do this to create some variance and make sure the rover spins around when it arrives at its location
-        self.goalPose = self.rotPose(self.goalPose, random.randint(60, 120))
+
+        # we want the yaw to be set to approximately match the direcion of travel
+        yawOffset = 0
+        if start != goal:  # we must have a previous point to look at, and just sanity check its not the same
+            
+            prevPose = self.gridToPose(start)
+            
+            self.goalPose.pose.orientation = Quaternion(0,0,0,1) #reset the rotation; we want to give it an absolute yaw
+
+            # we want the angle from start -> goal
+            vec = (
+                    self.goalPose.pose.position.x-prevPose.pose.position.x, 
+                    self.goalPose.pose.position.y-prevPose.pose.position.y
+                ) # direction vector
+            if vec[1] == 0: # avoid divide by 0 error
+                if vec[0] > 0:
+                    yawOffset = 0
+                else:
+                    yawOffset = 3.14
+            else:
+                # x is actually the opposite here, so we do x/y instead of y/x
+                yawOffset = math.atan2(vec[0], vec[1])
+
+            rospy.loginfo(" ****** vec: %s, yaw: %s ******" % (vec, yawOffset))
+
+        # set the prevGoal
+        #self.prevGoal = goal
+
+        self.goalPose = self.rotPose(self.goalPose, yawOffset)
 
         rospy.loginfo(" ****** Publishing exploration node: %s ******", self.goalPose)
         self.goalPub.publish(self.goalPose)
+        return True
 
     def rotPose(self, aPose, rotOffset):
         quat = (
@@ -237,30 +273,34 @@ class Explorer():
             aPose.pose.orientation.z,
             aPose.pose.orientation.w
             )
-        euler = tf.transformations.euler_from_quaternion(quat)
-        euler = (euler[0], euler[1], euler[2] + rotOffset)
-        quat = tf.transformations.quaternion_from_euler(euler[0], euler[1], euler[2])
-        aPose.pose.orientation.x = quat[0]
-        aPose.pose.orientation.y = quat[1]
-        aPose.pose.orientation.z = quat[2]
-        aPose.pose.orientation.w = quat[3]
+        roll, pitch, yaw = tf.transformations.euler_from_quaternion(quat)
+        yaw += rotOffset
+        # idk if need to do this
+        if yaw > 3.14:
+            yaw -= 2*3.14
+        elif yaw < -3.14:
+            yaw += 2*3.14
+
+        quat = tf.transformations.quaternion_from_euler(yaw, pitch, roll, axes='rzyx')
+        aPose.pose.orientation = Quaternion(*quat)
 
         return aPose
 
     def explore(self):
 
         while not rospy.is_shutdown():
+           
             rospy.loginfo(" ****** looping ******")
 
             if self.startPose is None:
                 self.startPose = self.getRobotPose()
                 # move forward slightly to fix dwa planner bug (footprint not set error)
                 while self.goalPose is None:
+                    rospy.sleep(1)
                     self.goalPose = self.getRobotPose(xOffset=0.3)
                     if self.goalPose is not None:
                         self.goalPub.publish(self.goalPose)
                         rospy.sleep(5)
-                    rospy.sleep(1)
             
             elif self.returnHome:
                 rospy.loginfo("Returning to start position")
@@ -268,20 +308,20 @@ class Explorer():
                 self.done = True
                 return
             
-            # this makes the robot spin a bit at the start to hopefully populate the costmap behind its starting location
+            # this makes the robot spin a bit at the start to populate the costmap behind its starting location
             elif self.rotsLeft > 0:
                 rospy.loginfo(" ****** %s rots left, rotating on the spot! ******" % self.rotsLeft)
                 self.goalPose = self.getRobotPose()
                 if self.goalPose is not None:
-                    self.goalPose = self.rotPose(self.goalPose, 160)
+                    self.goalPose = self.rotPose(self.goalPose, 3.14)
                     self.goalPub.publish(self.goalPose)
                     self.rotsLeft -= 1
                     # give it time to do its thing
-                    rospy.sleep(15)
+                    rospy.sleep(12)
                     continue
 
             elif self.grid is not None and self.gridMsg is not None and self.findGoal():
-                rospy.sleep(15)
+                rospy.sleep(20)
                 continue
 
             rospy.sleep(2)
