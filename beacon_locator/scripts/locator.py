@@ -9,7 +9,6 @@ from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PointStamped
 from std_msgs.msg import ColorRGBA
-from tf2_msgs.msg import TFMessage
 
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
@@ -47,7 +46,7 @@ class locator:
 		self.beaconsToFind = rospy.get_param("/beacon_locator_node/beaconsToFind")
 		tmpBeacons = rospy.get_param("/beacon_locator_node/beacons") # load the valid beacons from the ros param
 		for b in tmpBeacons:
-			self.beacons.append({ "id": b["id"], "top": b["top"], "bottom": b["bottom"], "found": 0 })
+			self.beacons.append({ "id": b["id"], "top": b["top"], "bottom": b["bottom"], "found": 0, "positions": [], "marker": Marker() })
 
 
 	# callback function for when an rgb image is received from the Kinect sensor
@@ -69,32 +68,44 @@ class locator:
 		# caution: only leave uncommented for testing purposes
 #		output = np.zeros((480,640,3), np.uint8)			
 
-		#print "Frame Processed"
+		foundBeacon = False # flag to indicate if beacon has been found in this frame
+
 		# iterate through all pairs of detected rectangles
 		for rect1, rect2 in itertools.permutations(rects, 2):
+
 			# if the rect1 is positioned directly on top of rect2
 			if rect1["centerY"] < rect2["centerY"] and self.doesOverlap(rect1["minX"],rect1["maxX"],rect2["minX"],rect2["maxX"]) and abs(rect1["maxY"] - rect2["minY"]) < 10:
-				# check if beacon is a valid colour combination
-				for b in self.beacons:
-					if b["top"] == rect1["colour"] and b["bottom"] == rect2["colour"]:
-						distance = self.getDepth(min(rect1["minX"], rect2["minX"]), max(rect1["maxX"], rect2["maxX"]), rect1["minY"], rect2["maxY"]) / 1000
-						bearing = self.getBearing(int((rect1["centerX"]+rect2["centerX"])/2))
-						position = self.convertReferenceFrame(distance, bearing)
 
-						if b["found"] == 0 and distance > 0.5 and self.numBeaconsFound != self.beaconsToFind: # beacon for the first time been found			
-							print "Beacon %d: %s / %s [depth = %.2f(m) at bearing = %d (deg) (x: %.2f, y: %.2f)]" % (b["id"], rect1["colour"], rect2["colour"], distance, bearing, position["x"], position["y"]) # beacon has successfully identified
-							self.publishBeacon(b["id"], rect1["colour"], rect2["colour"], position["x"], position["y"])
-							b["found"] = 1
+				distance = self.getDepth(min(rect1["minX"], rect2["minX"]), max(rect1["maxX"], rect2["maxX"]), rect1["minY"], rect2["maxY"]) / 1000
+				bearing = self.getBearing(int((rect1["centerX"]+rect2["centerX"])/2))
+				position = self.convertReferenceFrame(distance, bearing)				
+				
+				if distance > 0.5 and position["x"] is not None and position["y"] is not None: # rectangles have been located
+					for beacon in self.beacons: # check if beacon is a valid colour combination
+						if beacon["top"] == rect1["colour"] and beacon["bottom"] == rect2["colour"]:	
+							print "Beacon %d: %s/%s [dist:%.2f(m) at brg:%.1f(deg) (x:%.2f, y:%.2f)]" % (beacon["id"], beacon["top"], beacon["bottom"], distance, bearing, position["x"], position["y"]) # beacon has successfully identified
+							
+							if len(beacon["positions"]) == 25: # keep only the last 25 positions
+								del beacon["positions"][0]					
+							beacon["positions"].append(position) # add the latest position
+												
+							self.publishBeacon(beacon) # publish the beacon
+							foundBeacon = True
 
 						# draw visualisation of possible beacon colour candidates
 						# caution: only leave uncommented for testing purposes
 #						cv2.rectangle(output, (rect1["minX"], rect1["minY"]), (rect1["maxX"], rect1["maxY"]), self.colours[rect1["colour"]]["colour"], 3)
 #						cv2.rectangle(output, (rect2["minX"], rect2["minY"]), (rect2["maxX"], rect2["maxY"]), self.colours[rect2["colour"]]["colour"], 3)
-						
+
+		if foundBeacon and self.numBeaconsFound == self.beaconsToFind: # if beacon has been found in this frame and all the beacons have been found
+			print "All beacons have been found"
+			self.foundStatus.publish("complete") # signal that beacon location is complete
+
 		# display the visualisation
 		# caution: only leave uncommented for testing purposes
 #		cv2.imshow("images", output)
 #		cv2.waitKey(0)
+
 
 	# returns a list of rectangles the are possible candidates
 	def getColourRects(self, img, colour):
@@ -151,101 +162,120 @@ class locator:
 
 	# gets the bearing of the beacon relative to the robots reference frame (in degrees)
 	def getBearing(self, x):
-		return int(((x-320)/640)*62)
+		return -((x-320)/640) * 62
 
 
 	# converts the reference frame of the beacon from local to global
 	def convertReferenceFrame(self, distance, bearing):
-		rad = - bearing * math.pi/180
+		rad = bearing * math.pi / 180 # convert bearing to radians
 		try:
 			(trans,rot) = self.telemListener.lookupTransform('/map', '/base_link', rospy.Time(0))
-			bPoint=PointStamped()
+			bPoint = PointStamped()
 			bPoint.header.frame_id = "/base_link"
-			bPoint.header.stamp =rospy.Time(0)
-			bPoint.point.x=distance*math.cos(rad)
-			bPoint.point.y=distance*math.sin(rad)
-			bPoint.point.z=0.0
+			bPoint.header.stamp = rospy.Time(0)
+			bPoint.point.x = distance*math.cos(rad)
+			bPoint.point.y = distance*math.sin(rad)
+			bPoint.point.z = 0.0
 			p = self.telemListener.transformPoint("/map",bPoint)
 			return { "x": p.point.x, "y": p.point.y }
+#			return { "x": bPoint.point.x, "y": bPoint.point.y }
 
 		except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
 			print e
-			return { "x": 0, "y": 0 }
+			return { "x": None, "y": None }
 
 
 	# publish a detected beacon
-	def publishBeacon(self, beaconId, top, bottom, x, y):
-		marker = Marker()
-		marker.id = beaconId
-		marker.header.frame_id = "/map"
-		marker.type = 11
-		marker.action = 0
-		marker.scale.x = 1.0
-		marker.scale.y = 1.0
-		marker.scale.z = 1.0
-		marker.pose.orientation.w = 1.0
-		marker.pose.position.x = x
-		marker.pose.position.y = y
-		marker.pose.position.z = 0
+	def publishBeacon(self, beacon):
+		beaconPos = self.getBeaconPosition(beacon) # gets the average beacon position
+		top = beacon["top"]
+		bottom = beacon["bottom"]
+		marker = beacon["marker"]
+		marker.pose.position.x = beaconPos["x"]
+		marker.pose.position.y = beaconPos["y"]
 
-		# compute the required colours
-		baseCol = ColorRGBA(0.0, 0.0, 0.0, 1.0)
-		topCol = ColorRGBA(self.colours[top]["colour"][2]/255, self.colours[top]["colour"][1]/255, self.colours[top]["colour"][0]/255, 1.0)
-		bottomCol = ColorRGBA(self.colours[bottom]["colour"][2]/255, self.colours[bottom]["colour"][1]/255, self.colours[bottom]["colour"][0]/255, 1.0)
+		if beacon["found"] == 0: # if this is the first time the beacon has been found, create the marker and flag it as found
+			marker.id = beacon["id"]
+			marker.header.frame_id = "/map"
+			marker.type = 11
+			marker.action = 0
+			marker.scale.x = 1.0
+			marker.scale.y = 1.0
+			marker.scale.z = 1.0
+			marker.pose.orientation.w = 1.0
+			marker.pose.position.z = 0
 
-		# compute the bottom and top center points
-		bottomCenter = Point(0, 0, 0)
-		topCenter = Point (0, 0, 0.4)
+			# compute the required colours
+			baseCol = ColorRGBA(0.0, 0.0, 0.0, 1.0)
+			topCol = ColorRGBA(self.colours[top]["colour"][2]/255, self.colours[top]["colour"][1]/255, self.colours[top]["colour"][0]/255, 1.0)
+			bottomCol = ColorRGBA(self.colours[bottom]["colour"][2]/255, self.colours[bottom]["colour"][1]/255, self.colours[bottom]["colour"][0]/255, 1.0)
 
-		incAngle = math.pi/8
-		curAngle = 0
-		lastPoints = [None, None, None, None, None, None, None]
+			# compute the bottom and top center points
+			bottomCenter = Point(0, 0, 0)
+			topCenter = Point (0, 0, 0.4)
 
-		for i in range(0, 17):
-			# produce a list of points representing the radial cross section of the marker
-			points = [None, None, None, None, None, None, None]
-			xComp = math.sin(curAngle)
-			yComp = math.cos(curAngle)
-			points[0] = Point(xComp*0.05, yComp*0.05, 0)
-			points[1] = Point(xComp*0.05, yComp*0.05, 0.01)
-			points[2] = Point(xComp*0.01, yComp*0.01, 0.01)
-			points[3] = Point(xComp*0.01, yComp*0.01, 0.2)
-			points[4] = Point(xComp*0.05, yComp*0.05, 0.2)
-			points[5] = Point(xComp*0.05, yComp*0.05, 0.3)
-			points[6] = Point(xComp*0.05, yComp*0.05, 0.4)
+			incAngle = math.pi/8
+			curAngle = 0
+			lastPoints = [None, None, None, None, None, None, None]
 
-			if lastPoints[0] is not None: # if we can construct a fae
-				self.markerAddTri(marker, baseCol, bottomCenter, lastPoints[0], points[0]) # bottom face
-				self.markerAddRect(marker, baseCol, lastPoints[0], points[0], points[1], lastPoints[1])
-				self.markerAddRect(marker, baseCol, lastPoints[1], points[1], points[2], lastPoints[2])
-				self.markerAddRect(marker, baseCol, lastPoints[2], points[2], points[3], lastPoints[3])
-				self.markerAddRect(marker, bottomCol, lastPoints[3], points[3], points[4], lastPoints[4])
-				self.markerAddRect(marker, bottomCol, lastPoints[4], points[4], points[5], lastPoints[5])
-				self.markerAddRect(marker, topCol, lastPoints[5], points[5], points[6], lastPoints[6])
-				self.markerAddTri(marker, topCol, topCenter, lastPoints[6], points[6]) # top face
+			for i in range(0, 17):
+				# produce a list of points representing the radial cross section of the marker
+				points = [None, None, None, None, None, None, None]
+				xComp = math.sin(curAngle)
+				yComp = math.cos(curAngle)
+				points[0] = Point(xComp*0.05, yComp*0.05, 0)
+				points[1] = Point(xComp*0.05, yComp*0.05, 0.01)
+				points[2] = Point(xComp*0.01, yComp*0.01, 0.01)
+				points[3] = Point(xComp*0.01, yComp*0.01, 0.2)
+				points[4] = Point(xComp*0.05, yComp*0.05, 0.2)
+				points[5] = Point(xComp*0.05, yComp*0.05, 0.3)
+				points[6] = Point(xComp*0.05, yComp*0.05, 0.4)
 
-			curAngle += incAngle # increment the angle for each iteration
-			lastPoints = points # store the calculated cross section for the next iteration
+				if lastPoints[0] is not None: # if we can construct a fae
+					self.markerAddTri(marker, baseCol, bottomCenter, lastPoints[0], points[0]) # bottom face
+					self.markerAddRect(marker, baseCol, lastPoints[0], points[0], points[1], lastPoints[1])
+					self.markerAddRect(marker, baseCol, lastPoints[1], points[1], points[2], lastPoints[2])
+					self.markerAddRect(marker, baseCol, lastPoints[2], points[2], points[3], lastPoints[3])
+					self.markerAddRect(marker, bottomCol, lastPoints[3], points[3], points[4], lastPoints[4])
+					self.markerAddRect(marker, bottomCol, lastPoints[4], points[4], points[5], lastPoints[5])
+					self.markerAddRect(marker, topCol, lastPoints[5], points[5], points[6], lastPoints[6])
+					self.markerAddTri(marker, topCol, topCenter, lastPoints[6], points[6]) # top face
 
+				curAngle += incAngle # increment the angle for each iteration
+				lastPoints = points # store the calculated cross section for the next iteration
 
-		self.numBeaconsFound += 1
-		if self.numBeaconsFound == self.beaconsToFind:
-			print "Beacon discovery is Complete"
-			self.foundStatus.publish("complete")
+			self.numBeaconsFound += 1 # increment the number of beacons which have been found
+			beacon["found"] = 1 # flag the beacon as found
 
-		self.beaconPublisher.publish(marker)
+		self.beaconPublisher.publish(marker) # publish the marker for rviz
 
 
 	# adds a triangle to a specified marker
 	def markerAddTri(self, marker, col, p0, p1, p2):
-		marker.points += [p0, p1, p2]
-		marker.colors += [col, col, col]
+		marker.points += [p0, p1, p2] # add one triangle
+		marker.colors += [col, col, col] # colour each of the vertices
 
 
 	# adds a rectangle to a specified marker
 	def markerAddRect(self, marker, col, p0, p1, p2, p3):
-		marker.points += [p0, p1, p2, p0, p2, p3]
-		marker.colors += [col, col, col, col, col, col]
+		marker.points += [p0, p1, p2, p0, p2, p3] # add two triangles which form the rectangle
+		marker.colors += [col, col, col, col, col, col] # colour each of the vertices
+
+
+	# gets the average position of a beacon
+	def getBeaconPosition(self, beacon):
+		numPositions = len(beacon["positions"])
+		sumX = 0
+		sumY = 0
+		for pos in beacon["positions"]: # accumulate all the x and y values
+			sumX += pos["x"]
+			sumY += pos["y"]
+
+		if numPositions > 0: # if the list is non-empty (should always be true)
+			return { "x": sumX/numPositions, "y": sumY/numPositions } # return average position
+		else:
+			return { "x": 0, "y": 0 }
+
 
 
 if __name__ == '__main__':
