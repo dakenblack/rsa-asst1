@@ -15,7 +15,7 @@
                 { id: 5, top: green, bottom: pink }
             ]
         </rosparam>
-	<rosparam> beaconsToFind: 3 </rosparam>
+	<rosparam> beaconsToFind: 4 </rosparam>
     </node>
 
     <node pkg="beacon_locator" type="explorer.py" name="explorer" output="screen"/>
