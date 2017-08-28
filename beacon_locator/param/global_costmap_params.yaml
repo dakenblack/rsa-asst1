@@ -1,10 +1,10 @@
 global_costmap:
    global_frame: /comp3431/map
    robot_base_frame: /base_footprint
-   update_frequency: 1.0
+   update_frequency: 5.0
    publish_frequency: 0.2
    static_map: true # this just makes move_base use an external map (e.g. from gmapping) instead of generating its own
-   transform_tolerance: 1.2
+   transform_tolerance: 1.5
    plugins:
      - {name: static_layer,            type: "costmap_2d::StaticLayer"}
      - {name: obstacle_layer,          type: "costmap_2d::VoxelLayer"}

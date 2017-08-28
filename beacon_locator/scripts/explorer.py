@@ -48,7 +48,7 @@ class Explorer():
 
         self.exploring  = False     # used to pause exploration
 
-        self.rotsLeft   = 2         # when this is > 0, the robot will turn on the spot 180 degrees this many times before continuing
+        self.rotsLeft   = 2         # when this is > 0, the robot will turn on the spot this many times in this many increments
 
         self.gridLock   = Lock()    # for locking the grid data
         self.grid       = None      # the occupancy grid data as a mutable list
@@ -216,8 +216,10 @@ class Explorer():
         while dist >= MAX_GOAL_DIST:
             rospy.loginfo("dist: %s" % dist)
             goal = explored[goal]
+            if goal is None:
+                break
             # get euclidean distance and multiply by resolution to get metres
-            #rospy.loginfo("goal %s, curr %s, explored[curr] %s, start %s, self.prevGoal %s" %(goal, curr, explored[curr], start, self.prevGoal))
+            #rospy.loginfo("goal %s, start %s" %(goal, start))
             dist = math.sqrt((goal[0]-start[0])**2 + (goal[1]-start[1])**2) * self.gridMsg.info.resolution
 
         self.gridLock.release()
@@ -310,14 +312,15 @@ class Explorer():
                     rospy.sleep(1)
                     self.goalPose = self.getRobotPose(xOffset=0.3)
                     if self.goalPose is not None:
-                        self.goalPub.publish(self.goalPose)
-                        rospy.sleep(7)
+                        for i in range(7):
+                            self.goalPub.publish(self.goalPose)
+                            rospy.sleep(2)
             
             elif self.returnHome:
                 rospy.loginfo("Returning to start position")
                 self.goalPub.publish(self.startPose)
                 self.done = True
-                return
+                rospy.sleep(5)
             
             # this makes the robot spin a bit at the start to populate the costmap behind its starting location
             elif self.rotsLeft > 0:
@@ -325,15 +328,14 @@ class Explorer():
                 self.goalPose = self.getRobotPose()
                 if self.goalPose is not None:
                     self.goalPose = self.rotPose(self.goalPose, 3.14)
+
                     self.goalPub.publish(self.goalPose)
                     self.rotsLeft -= 1
                     # give it time to do its thing
-                    rospy.sleep(12)
-                    continue
+                    rospy.sleep(10)
 
             elif self.grid is not None and self.gridMsg is not None and self.findGoal():
-                rospy.sleep(20)
-                continue
+                rospy.sleep(18)
 
             rospy.sleep(2)
     

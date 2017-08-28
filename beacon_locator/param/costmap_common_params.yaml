@@ -4,6 +4,7 @@ max_obstacle_height: 0.60  # assume something like an arm is mounted on top of t
 robot_radius: 0.20  # distance a circular robot should be clear of the obstacle (kobuki: 0.18)
 # footprint: [[x0, y0], [x1, y1], ... [xn, yn]]  # if the robot is not circular
 
+#subscribe_to_updates: true
 map_type: voxel
 
 obstacle_layer:
@@ -14,7 +15,7 @@ obstacle_layer:
   z_voxels:             2
   unknown_threshold:    0
   mark_threshold:       0
-  combination_method:   1 # changing this to 0 doesn't seem to do much
+  combination_method:   0 # 0 seems better? id0 seems better? idkk
   track_unknown_space:  true #true needed for disabling global path planning through unknown space
   obstacle_range: 2.5
   raytrace_range: 3.0

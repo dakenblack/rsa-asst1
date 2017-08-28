@@ -2,9 +2,9 @@
 
     <include file="$(find beacon_locator)/launch/includes/gmapping.launch.xml"/>
     <include file="$(find beacon_locator)/launch/includes/move_base.launch.xml"/>
-    <include file="$(find beacon_locator)/launch/includes/hector_trajectory_server.launch.xml"/>
+    <!--include file="$(find beacon_locator)/launch/includes/hector_trajectory_server.launch.xml"/-->
 
-    <node pkg="beacon_locator" type="locator.py" name="beacon_locator_node" output="screen">
+    <!--node pkg="beacon_locator" type="locator.py" name="beacon_locator_node" output="screen">
         <rosparam>
             beacons: [
                 { id: 0, top: pink, bottom: green },
@@ -16,7 +16,7 @@
             ]
         </rosparam>
 	<rosparam> beaconsToFind: 4 </rosparam>
-    </node>
+    </node-->
 
     <node pkg="beacon_locator" type="explorer.py" name="explorer" output="screen"/>
 </launch>
