@@ -60,10 +60,11 @@ class Explorer():
 
         self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.gotMap)
         self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.gotMapUpdate, queue_size=2)
+
         self.statusSub = rospy.Subscriber('/beacon_locator_node/status', String, self.gotStatus)
 
-	    self.commandSub = rospy.Subscriber('/crosbot/commands', ControlCommand, gotCommand)
-	    self.statusPub = rospy.Publisher("/crosbot/status", ControlStatus, queue_size=10)
+        self.commandSub = rospy.Subscriber('/crosbot/commands', ControlCommand, self.gotCommand)
+        self.statusPub = rospy.Publisher("/crosbot/status", ControlStatus, queue_size=10)
 
     def gotStatus(self, status):
 
@@ -240,14 +241,8 @@ class Explorer():
                     self.goalPose.pose.position.x-prevPose.pose.position.x, 
                     self.goalPose.pose.position.y-prevPose.pose.position.y
                 ) # direction vector
-            if vec[1] == 0: # avoid divide by 0 error
-                if vec[0] > 0:
-                    yawOffset = 0
-                else:
-                    yawOffset = 3.14
-            else:
-                # x is actually the opposite here, so we do x/y instead of y/x
-                yawOffset = math.atan2(vec[0], vec[1])
+            # ros knows what its doing somehow and putting these in normally should work (y, x)
+            yawOffset = math.atan2(vec[1], vec[0])
 
             rospy.loginfo(" ****** vec: %s, yaw: %s ******" % (vec, yawOffset))
 
@@ -284,8 +279,7 @@ class Explorer():
 
         while not rospy.is_shutdown():
 
-            rospy.loginfo(" ****** exploring ******")
-
+            """
             aPose = self.getRobotPose()
             if aPose is not None:
                 quat = (
@@ -296,7 +290,7 @@ class Explorer():
                     )
                 roll, pitch, yaw = tf.transformations.euler_from_quaternion(quat)
                 rospy.loginfo(" ****** yaw is %s ******" % yaw)
-
+            """
             """
             if not self.exploring:
                 # try to stop move_base from continuing by publishing current pose as goal
@@ -305,7 +299,9 @@ class Explorer():
                     self.goalPub.publish(self.goalPose)
                 rospy.sleep(5)
                 continue
-
+            else:
+                rospy.loginfo(" ****** exploring ******")
+            """
 
             if self.startPose is None:
                 self.startPose = self.getRobotPose()
@@ -338,10 +334,9 @@ class Explorer():
             elif self.grid is not None and self.gridMsg is not None and self.findGoal():
                 rospy.sleep(20)
                 continue
-            """
 
             rospy.sleep(2)
-
+    
     def gotCommand(cmd):
         if cmd.command == "command_start":
             self.exploring = True
@@ -354,5 +349,6 @@ class Explorer():
 if __name__ == "__main__":
     rospy.init_node('explorer_node')
     e = Explorer()
+    e.explore()
     rospy.spin()
 
