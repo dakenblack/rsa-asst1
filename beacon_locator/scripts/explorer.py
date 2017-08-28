@@ -26,8 +26,6 @@ import math, random, copy
 
 # maximum distance to set a goal
 MAX_GOAL_DIST = 1
-# only update the goal if we're within this distance of the last goal we set
-#MIN_DIST_TO_PREV_GOAL = 0.3
 
 # threshold in the costmap we consider occupied
 OG_THRESHOLD = 78
@@ -249,9 +247,6 @@ class Explorer():
 
             rospy.loginfo(" ****** vec: %s, yaw: %s ******" % (vec, yawOffset))
 
-        # set the prevGoal
-        #self.prevGoal = goal
-
         self.goalPose = self.rotPose(self.goalPose, yawOffset)
 
         rospy.loginfo(" ****** Publishing exploration node: %s ******", self.goalPose)
@@ -282,18 +277,6 @@ class Explorer():
 
         while not rospy.is_shutdown():
 
-            """
-            aPose = self.getRobotPose()
-            if aPose is not None:
-                quat = (
-                    aPose.pose.orientation.x,
-                    aPose.pose.orientation.y,
-                    aPose.pose.orientation.z,
-                    aPose.pose.orientation.w
-                    )
-                roll, pitch, yaw = tf.transformations.euler_from_quaternion(quat)
-                rospy.loginfo(" ****** yaw is %s ******" % yaw)
-            """
             """
             if not self.exploring:
                 # try to stop move_base from continuing by publishing current pose as goal
