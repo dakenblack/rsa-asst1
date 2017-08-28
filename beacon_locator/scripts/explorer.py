@@ -204,6 +204,8 @@ class Explorer():
                     # set the 'prev' of this child to be the current node we're expanding
                     frontier[c] = curr
 
+        self.gridLock.release()
+
         # if we can't find unknown space to explore, just go to the furthest away passable point
         # NOTE: This could lead to just wandering the centre of the maze - probably not an issue though
         if not foundGoal:
@@ -217,12 +219,11 @@ class Explorer():
             rospy.loginfo("dist: %s" % dist)
             goal = explored[goal]
             if goal is None:
-                break
+                return True
             # get euclidean distance and multiply by resolution to get metres
             #rospy.loginfo("goal %s, start %s" %(goal, start))
             dist = math.sqrt((goal[0]-start[0])**2 + (goal[1]-start[1])**2) * self.gridMsg.info.resolution
 
-        self.gridLock.release()
         # set a pose
 
         self.goalPose = self.gridToPose(goal)
@@ -335,7 +336,7 @@ class Explorer():
                     rospy.sleep(10)
 
             elif self.grid is not None and self.gridMsg is not None and self.findGoal():
-                rospy.sleep(18)
+                rospy.sleep(15)
 
             rospy.sleep(2)
     
