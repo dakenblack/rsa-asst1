@@ -11,7 +11,8 @@
                 { id: 1, top: blue, bottom: pink },
                 { id: 2, top: pink, bottom: yellow },
                 { id: 3, top: yellow, bottom: pink },
-                { id: 4, top: pink, bottom: blue }
+                { id: 4, top: pink, bottom: blue },
+                { id: 5, top: green, bottom: pink }
             ]
         </rosparam>
 	<rosparam> beaconsToFind: 3 </rosparam>
