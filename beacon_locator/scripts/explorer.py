@@ -58,8 +58,8 @@ class Explorer():
 
         self.goalPub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=1)
 
-        self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.gotMap)
-        self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.gotMapUpdate, queue_size=2)
+        self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.gotMap, queue_size=1)
+        self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.gotMapUpdate, queue_size=1)
 
         self.statusSub = rospy.Subscriber('/beacon_locator_node/status', String, self.gotStatus)
 
