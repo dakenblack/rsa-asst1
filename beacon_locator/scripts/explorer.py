@@ -294,9 +294,9 @@ class Explorer():
                 # move forward slightly to fix dwa planner bug (footprint not set error)
                 while self.goalPose is None:
                     rospy.sleep(1)
-                    self.goalPose = self.getRobotPose(xOffset=0.3)
+                    self.goalPose = self.getRobotPose(xOffset=0.35)
                     if self.goalPose is not None:
-                        for i in range(7):
+                        for i in range(6):
                             self.goalPub.publish(self.goalPose)
                             rospy.sleep(2)
             
