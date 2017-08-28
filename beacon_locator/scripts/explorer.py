@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """
     Explorer node
-    Subscribes to an OccupancyGrid on the '/map' topic
+    Waits for a start command on crosbot/commands
+    Subscribes to a global costmap from move_base topic
     Subscribes to a String on the '/beacon_locator_node/status' topic
     Publishes a PoseStamped to the '/move_base/simple_goal' topic
     First records the initial position of the rover (when this node starts)
@@ -14,6 +15,7 @@
 import rospy
 import tf
 
+from crosbot_msgs.msg import ControlCommand, ControlStatus
 from std_msgs.msg import String
 from nav_msgs.msg import OccupancyGrid
 from map_msgs.msg import OccupancyGridUpdate    # wtf
@@ -23,7 +25,7 @@ from threading import Lock
 import math, random, copy
 
 # maximum distance to set a goal
-MAX_GOAL_DIST = 0.5
+MAX_GOAL_DIST = 1
 # only update the goal if we're within this distance of the last goal we set
 #MIN_DIST_TO_PREV_GOAL = 0.3
 
@@ -32,23 +34,24 @@ OG_THRESHOLD = 78
 # the value in the costmap representing unknown area (the area we want to explore!)
 UNKNOWN_COST = -1
 
-RANDOM_ROT = 3.14/2
+MAP_FRAME = "/comp3431/map"
 
 class Explorer():
     
     def __init__(self):
 
-        self.startPose  = None      # the initial pose of the robot in the /map frame
+        self.startPose  = None      # the initial pose of the robot in the map frame
         self.goalPose   = None      # the pose we're currently navigating to
-        #self.prevGoal   = None      # denotes the goal we're currently navigating to as a tuple
+
         self.returnHome = False     # denotes that we've found all the beacons
         self.done       = False     # denotes that we're done and don't need to do anything
 
-        self.rotsLeft   = 2         # when this is > 0, the robot will turn on the spot 120 degrees this many times before continuing
+        self.exploring  = False     # used to pause exploration
+
+        self.rotsLeft   = 2         # when this is > 0, the robot will turn on the spot 180 degrees this many times before continuing
 
         self.gridLock   = Lock()    # for locking the grid data
         self.grid       = None      # the occupancy grid data as a mutable list
-
         self.gridMsg    = None      # unmodified occupancy grid message
 
         self.tfListener = tf.TransformListener()
@@ -59,9 +62,9 @@ class Explorer():
         self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.gotMapUpdate, queue_size=2)
         self.statusSub = rospy.Subscriber('/beacon_locator_node/status', String, self.gotStatus)
 
-        # only needed for testing
-        #self.mapPub = rospy.Publisher('/explore_map', OccupancyGrid, queue_size=1) 
-    
+	    self.commandSub = rospy.Subscriber('/crosbot/commands', ControlCommand, gotCommand)
+	    self.statusPub = rospy.Publisher("/crosbot/status", ControlStatus, queue_size=10)
+
     def gotStatus(self, status):
 
         if status.data == "complete":
@@ -99,27 +102,22 @@ class Explorer():
         self.gridLock.release() 
         rospy.loginfo(" ****** Done updating map ****** ")
 
-        # testing
-        #self.gridMsg.data = tuple(self.grid)
-        #self.gridMsg.header.stamp = rospy.Time.now()
-        #self.mapPub.publish(self.gridMsg)
-
     def getRobotPose(self, xOffset=0):
         """ Get robot pose in map frame """
-        if self.tfListener.frameExists("/base_link") and self.tfListener.frameExists("/map"):
+        if self.tfListener.frameExists("/base_link") and self.tfListener.frameExists(MAP_FRAME):
             try:
-                t = self.tfListener.getLatestCommonTime("/base_link", "/map")
+                t = self.tfListener.getLatestCommonTime("/base_link", MAP_FRAME)
                 p = PoseStamped()
                 p.header.frame_id = "/base_link"
                 #p.header.stamp = t
                 p.pose.position.x = xOffset
-                mapPose = self.tfListener.transformPose("/map", p)
+                mapPose = self.tfListener.transformPose(MAP_FRAME, p)
                 #rospy.loginfo("Robot position is : %s" % mapPose)
                 return mapPose
             except Exception as e:
                 rospy.logerr(str(e))
         else:
-            rospy.logwarn("Waiting for /base_link and /map transforms to exist!")
+            rospy.logwarn("Waiting for /base_link and %s transforms to exist!" % MAP_FRAME)
             return None 
 
     def gridToPose(self, aGridTuple):
@@ -206,13 +204,9 @@ class Explorer():
                     frontier[c] = curr
 
         # if we can't find unknown space to explore, just go to the furthest away passable point
-        # NOTE: This could lead to just wandering the centre of the maze - might not be an issue though
+        # NOTE: This could lead to just wandering the centre of the maze - probably not an issue though
         if not foundGoal:
-            rospy.loginfo(" ****** Couldn't find a frontier! Exploring furthest point ****** ")
-            # removed so robot won't stop progress
-            #self.goalPose = None
-            #self.gridLock.release()
-            #return False
+            rospy.loginfo(" ****** Couldn't find a frontier! Exploring furthest free point ****** ")
 
         goal = curr
 
@@ -289,8 +283,29 @@ class Explorer():
     def explore(self):
 
         while not rospy.is_shutdown():
-           
-            rospy.loginfo(" ****** looping ******")
+
+            rospy.loginfo(" ****** exploring ******")
+
+            aPose = self.getRobotPose()
+            if aPose is not None:
+                quat = (
+                    aPose.pose.orientation.x,
+                    aPose.pose.orientation.y,
+                    aPose.pose.orientation.z,
+                    aPose.pose.orientation.w
+                    )
+                roll, pitch, yaw = tf.transformations.euler_from_quaternion(quat)
+                rospy.loginfo(" ****** yaw is %s ******" % yaw)
+
+            """
+            if not self.exploring:
+                # try to stop move_base from continuing by publishing current pose as goal
+                aPose = self.getRobotPose()
+                if aPose is not None:
+                    self.goalPub.publish(self.goalPose)
+                rospy.sleep(5)
+                continue
+
 
             if self.startPose is None:
                 self.startPose = self.getRobotPose()
@@ -300,7 +315,7 @@ class Explorer():
                     self.goalPose = self.getRobotPose(xOffset=0.3)
                     if self.goalPose is not None:
                         self.goalPub.publish(self.goalPose)
-                        rospy.sleep(5)
+                        rospy.sleep(7)
             
             elif self.returnHome:
                 rospy.loginfo("Returning to start position")
@@ -323,13 +338,21 @@ class Explorer():
             elif self.grid is not None and self.gridMsg is not None and self.findGoal():
                 rospy.sleep(20)
                 continue
+            """
 
             rospy.sleep(2)
+
+    def gotCommand(cmd):
+        if cmd.command == "command_start":
+            self.exploring = True
+            self.statusPub.publish(ControlStatus(status="STARTING EXPLORATION"))
+        elif cmd.command == "command_stop":
+            self.exploring = False
+            self.statusPub.publish(ControlStatus(status="STOPPING EXPLORATION"))
 
 
 if __name__ == "__main__":
     rospy.init_node('explorer_node')
     e = Explorer()
-    e.explore()
     rospy.spin()
 
