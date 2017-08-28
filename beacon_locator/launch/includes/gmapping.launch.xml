@@ -3,6 +3,7 @@
 
     <param name="linearUpdate" value="0.1"/>
     <param name="angularUpdate" value="0.1"/>
+	<remap from="map" to = "comp3431/map"/>
   <!--
     <param name="base_frame" value="$(arg base_frame)"/>
     <param name="odom_frame" value="$(arg odom_frame)"/>
