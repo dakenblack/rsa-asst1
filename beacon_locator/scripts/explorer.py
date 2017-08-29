@@ -25,7 +25,7 @@ from threading import Lock
 import math, random, copy
 
 # maximum distance to set a goal
-MAX_GOAL_DIST = 1
+MAX_GOAL_DIST = 1.5
 
 # threshold in the costmap we consider occupied
 OG_THRESHOLD = 78
@@ -33,6 +33,9 @@ OG_THRESHOLD = 78
 UNKNOWN_COST = -1
 
 MAP_FRAME = "/comp3431/map"
+
+# how far to rotate each increment (when doing rotations on the spot)
+ROT_INC = 3.14/2
 
 class Explorer():
     
@@ -46,7 +49,7 @@ class Explorer():
 
         self.exploring  = False     # used to pause exploration
 
-        self.rotsLeft   = 2         # when this is > 0, the robot will turn on the spot this many times in this many increments
+        self.rotsLeft   = 4         # when this is > 0, the robot will turn on the spot this many times in this many increments
 
         self.gridLock   = Lock()    # for locking the grid data
         self.grid       = None      # the occupancy grid data as a mutable list
@@ -311,15 +314,16 @@ class Explorer():
                 rospy.loginfo(" ****** %s rots left, rotating on the spot! ******" % self.rotsLeft)
                 self.goalPose = self.getRobotPose()
                 if self.goalPose is not None:
-                    self.goalPose = self.rotPose(self.goalPose, 3.14)
+                    self.goalPose = self.rotPose(self.goalPose, ROT_INC)
 
                     self.goalPub.publish(self.goalPose)
                     self.rotsLeft -= 1
                     # give it time to do its thing
-                    rospy.sleep(10)
+                    rospy.sleep(5)
 
             elif self.grid is not None and self.gridMsg is not None and self.findGoal():
-                rospy.sleep(15)
+                self.rotsLeft = 4
+                rospy.sleep(17)
 
             rospy.sleep(2)
     
