@@ -23,5 +23,5 @@
 	<rosparam> beaconsToFind: 4 </rosparam>
     </node-->
 
-    <!--node pkg="beacon_locator" type="maze_explorer.py" name="maze_explorer" output="screen"/-->
+    <node pkg="beacon_locator" type="maze_explorer.py" name="maze_explorer" output="screen"/>
 </launch>

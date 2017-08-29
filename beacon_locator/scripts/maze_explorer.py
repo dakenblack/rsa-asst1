@@ -25,7 +25,7 @@ from threading import Lock
 import math, random, copy
 
 # maximum distance to set a goal
-MAX_GOAL_DIST = 1
+MAX_GOAL_DIST = 1.5
 
 # threshold in the costmap we consider occupied
 OG_THRESHOLD = 78
@@ -33,6 +33,8 @@ OG_THRESHOLD = 78
 UNKNOWN_COST = -1
 
 MAP_FRAME = "/map"
+
+START_MOVE_OFFSET = 1
 
 class Explorer():
     
@@ -46,7 +48,8 @@ class Explorer():
 
         self.exploring  = False     # used to pause exploration
 
-        self.rotsLeft   = 2         # when this is > 0, the robot will turn on the spot this many times in this many increments
+        self.prevPose   = None
+        self.backtracksLeft   = 1         # when this is > 0, the robot will backtrack to the previous pose
 
         self.gridLock   = Lock()    # for locking the grid data
         self.grid       = None      # the occupancy grid data as a mutable list
@@ -56,8 +59,8 @@ class Explorer():
 
         self.goalPub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=1)
 
-        self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.gotMap, queue_size=1)
-        self.mapSub = rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGridUpdate, self.gotMapUpdate, queue_size=1)
+        self.mapSub = rospy.Subscriber('/costmap_2d_node/costmap/costmap', OccupancyGrid, self.gotMap, queue_size=1)
+        self.mapSub = rospy.Subscriber('/costmap_2d_node/costmap/costmap_updates', OccupancyGridUpdate, self.gotMapUpdate, queue_size=1)
 
         self.statusSub = rospy.Subscriber('/beacon_locator_node/status', String, self.gotStatus)
 
@@ -251,6 +254,9 @@ class Explorer():
 
         rospy.loginfo(" ****** Publishing exploration node: %s ******", self.goalPose)
         self.goalPub.publish(self.goalPose)
+
+        self.prevPose = self.goalPose
+
         return True
 
     def rotPose(self, aPose, rotOffset):
@@ -291,10 +297,11 @@ class Explorer():
 
             if self.startPose is None:
                 self.startPose = self.getRobotPose()
+                self.prevPose = self.startPose
                 # move forward slightly to fix dwa planner bug (footprint not set error)
                 while self.goalPose is None:
                     rospy.sleep(1)
-                    self.goalPose = self.getRobotPose(xOffset=0.35)
+                    self.goalPose = self.getRobotPose(xOffset=START_MOVE_OFFSET)
                     if self.goalPose is not None:
                         for i in range(6):
                             self.goalPub.publish(self.goalPose)
@@ -306,20 +313,16 @@ class Explorer():
                 self.done = True
                 rospy.sleep(5)
             
-            # this makes the robot spin a bit at the start to populate the costmap behind its starting location
-            elif self.rotsLeft > 0:
-                rospy.loginfo(" ****** %s rots left, rotating on the spot! ******" % self.rotsLeft)
-                self.goalPose = self.getRobotPose()
-                if self.goalPose is not None:
-                    self.goalPose = self.rotPose(self.goalPose, 3.14)
-
-                    self.goalPub.publish(self.goalPose)
-                    self.rotsLeft -= 1
+            elif self.backtracksLeft > 0:
+                rospy.loginfo(" ****** %s backtracks left, backtracking! ******" % self.rotsLeft)
+                if self.prevPose is not None:
+                    self.goalPub.publish(self.prevPose)
+                    self.backtracksLeft -= 1
                     # give it time to do its thing
-                    rospy.sleep(10)
+                    rospy.sleep(13)
 
             elif self.grid is not None and self.gridMsg is not None and self.findGoal():
-                rospy.sleep(15)
+                rospy.sleep(13)
 
             rospy.sleep(2)
     
