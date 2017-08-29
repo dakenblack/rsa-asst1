@@ -18,5 +18,5 @@
 	<rosparam> beaconsToFind: 4 </rosparam>
     </node>
 
-    <node pkg="beacon_locator" type="explorer.py" name="explorer" output="screen"/>
+    <node pkg="beacon_locator" type="explorer.py" name="explorer" output="screen" respawn="true" />
 </launch>
