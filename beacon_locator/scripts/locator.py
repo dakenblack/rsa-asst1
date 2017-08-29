@@ -9,6 +9,7 @@ from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PointStamped
 from std_msgs.msg import ColorRGBA
+from crosbot_msgs.msg import ControlCommand, ControlStatus
 
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
@@ -26,10 +27,12 @@ class locator:
 		self.depthSubscriber = rospy.Subscriber('/camera/depth/image_raw', Image, self.depthCallback) # subscribe to depth images from the Kinect
 		self.beaconPublisher = rospy.Publisher("/comp3431/beacons", Marker, queue_size=10) # publish beacons for RVIZ on the required topic
 		self.foundStatus = rospy.Publisher("/beacon_locator_node/status", String, queue_size=10)
+		self.commandSub = rospy.Subscriber('/crosbot/commands', ControlCommand, self.gotCommand)
 		self.telemListener = tf.TransformListener()
 
 		self.bridge = CvBridge() # create a bridge to convert from ROS images to OpenCV images
 		self.depthImage = None # stores the depth image set by the Kinect
+		self.locating = False # wait for control panel to start detection
 		
 		# define the colours which occur as halves of the beacons
 		# colour is used when rendering during testing (in BGR format).
@@ -51,6 +54,9 @@ class locator:
 
 	# callback function for when an rgb image is received from the Kinect sensor
 	def rgbCallback(self, img):
+
+		if self.locating == False: return # ignore callback if not in locating mode
+
 		try:
 			cvImg = self.bridge.imgmsg_to_cv2(img, "bgr8") # load image into OpenCV
 		except CvBridgeError as e:
@@ -276,6 +282,13 @@ class locator:
 			return { "x": sumX/numPositions, "y": sumY/numPositions } # return average position
 		else:
 			return { "x": 0, "y": 0 }
+
+	# gets commands from the crosbot control panel
+	def gotCommand(cmd):
+		if cmd.command == "command_start":
+			self.locating = True
+		elif cmd.command == "command_stop":
+			self.locating = False
 
 
 
