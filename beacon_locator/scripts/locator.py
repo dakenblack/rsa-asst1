@@ -169,14 +169,14 @@ class locator:
 	def convertReferenceFrame(self, distance, bearing):
 		rad = bearing * math.pi / 180 # convert bearing to radians
 		try:
-			(trans,rot) = self.telemListener.lookupTransform('/map', '/base_link', rospy.Time(0))
+			(trans,rot) = self.telemListener.lookupTransform('/comp3431/map', '/base_link', rospy.Time(0))
 			bPoint = PointStamped()
 			bPoint.header.frame_id = "/base_link"
 			bPoint.header.stamp = rospy.Time(0)
 			bPoint.point.x = distance*math.cos(rad)
 			bPoint.point.y = distance*math.sin(rad)
 			bPoint.point.z = 0.0
-			p = self.telemListener.transformPoint("/map",bPoint)
+			p = self.telemListener.transformPoint("/comp3431/map",bPoint)
 			return { "x": p.point.x, "y": p.point.y }
 #			return { "x": bPoint.point.x, "y": bPoint.point.y }
 
@@ -196,7 +196,7 @@ class locator:
 
 		if beacon["found"] == 0: # if this is the first time the beacon has been found, create the marker and flag it as found
 			marker.id = beacon["id"]
-			marker.header.frame_id = "/map"
+			marker.header.frame_id = "/comp3431/map"
 			marker.type = 11
 			marker.action = 0
 			marker.scale.x = 1.0
