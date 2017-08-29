@@ -1,0 +1,11 @@
+<gui>
+  <map type="fastslam" name="FastSLAM"
+    initialOdds="0.3"
+    particles="100"
+    gain="0.0005"
+  >
+  </map>
+  <gui>
+    <map name="FastSLAM" />
+  </gui>
+</gui>

@@ -32,7 +32,7 @@ OG_THRESHOLD = 78
 # the value in the costmap representing unknown area (the area we want to explore!)
 UNKNOWN_COST = -1
 
-MAP_FRAME = "/comp3431/map"
+MAP_FRAME = "/map"
 
 class Explorer():
     
@@ -333,7 +333,7 @@ class Explorer():
 
 
 if __name__ == "__main__":
-    rospy.init_node('explorer_node')
+    rospy.init_node('maze_explorer')
     e = Explorer()
     e.explore()
     rospy.spin()

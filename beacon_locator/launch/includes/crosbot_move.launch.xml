@@ -1,0 +1,17 @@
+<launch>
+	<include file="$(find beacon_locator)/launch/includes/crosbot-fastslam.launch.xml" />
+	<!--include file="$(find crosbot_explore)/launch/hector.launch" /-->
+	
+	<!--include file="$(find turtlebot_rviz_launchers)/launch/view_navigation.launch" /-->
+	
+	<include file="$(find beacon_locator)/launch/includes/crosbot_explore.launch.xml" />
+	
+	<node name="move" pkg="crosbot_explore" type="move" >
+		<remap from="goal" to="/move_base_simple/goal" />
+<rosparam>
+  voronoi:
+    restrict: 0.20
+    partial: 0.25
+</rosparam>
+	</node>
+</launch>

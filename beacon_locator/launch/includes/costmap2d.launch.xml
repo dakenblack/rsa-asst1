@@ -1,0 +1,8 @@
+<launch>
+
+  <node pkg="costmap_2d" type="costmap_2d_node" respawn="false" name="costmap_2d_node" output="screen">
+    <remap from="map" to = "/map"/>
+    <rosparam file="$(find beacon_locator)/param/costmap2d_common_params.yaml" command="load" ns="/costmap_2d_node/costmap"/>
+
+  </node>
+</launch>
