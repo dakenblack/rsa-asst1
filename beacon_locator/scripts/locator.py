@@ -204,6 +204,7 @@ class locator:
 			marker.scale.z = 1.0
 			marker.pose.orientation.w = 1.0
 			marker.pose.position.z = 0
+			marker.header.stamp = rospy.Time.now();
 
 			# compute the required colours
 			baseCol = ColorRGBA(0.0, 0.0, 0.0, 1.0)
