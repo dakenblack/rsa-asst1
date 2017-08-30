@@ -193,6 +193,7 @@ class locator:
 		marker = beacon["marker"]
 		marker.pose.position.x = beaconPos["x"]
 		marker.pose.position.y = beaconPos["y"]
+        marker.header.stamp = rospy.Time.now()
 
 		if beacon["found"] == 0: # if this is the first time the beacon has been found, create the marker and flag it as found
 			marker.id = beacon["id"]
