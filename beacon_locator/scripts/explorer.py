@@ -26,6 +26,7 @@ import math, random, copy
 
 # maximum distance to set a goal
 MAX_GOAL_DIST = 1
+MAX_GOAL_DIST_NO_FRONTIER = 3.5
 
 # threshold in the costmap we consider occupied
 OG_THRESHOLD = 78
@@ -206,14 +207,16 @@ class Explorer():
 
         # if we can't find unknown space to explore, just go to the furthest away passable point
         # NOTE: This could lead to just wandering the centre of the maze - probably not an issue though
+        max_goal_dist = MAX_GOAL_DIST
         if not foundGoal:
             rospy.loginfo(" ****** Couldn't find a frontier! Exploring furthest free point ****** ")
+            max_goal_dist = MAX_GOAL_DIST_NO_FRONTIER
 
         goal = curr
 
         # basically walk backwards along the path until we're with a certain distance of the robot
-        dist = MAX_GOAL_DIST
-        while dist >= MAX_GOAL_DIST:
+        dist = max_goal_dist
+        while dist >= max_goal_dist:
             rospy.loginfo("dist: %s" % dist)
             goal = explored[goal]
             if goal is None:
