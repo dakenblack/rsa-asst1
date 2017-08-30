@@ -1,6 +1,7 @@
 <launch>
 	<node pkg="hector_trajectory_server" type="hector_trajectory_server" name="hector_trajectory_server">
-	<remap from="trajectory" to="comp3431/path"/>
+	<remap from="trajectory" to="/comp3431/path"/>
+    <param name="target_frame_name" value="/comp3431/map"/>
 	</node>
 
 </launch>
